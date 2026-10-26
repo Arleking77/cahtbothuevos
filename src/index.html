@@ -64,8 +64,8 @@
     </main>
 
     <script>
-        // Reemplaza esta URL con tu enlace actual de Web App de Google Apps Script
-        const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec";
+        // Usamos corsproxy.io para saltarnos cualquier bloqueo de CORS en Vercel
+        const URL_APPS_SCRIPT = "https://corsproxy.io/?https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec";
 
         let todosLosPedidos = [];
         let mapaProductos = {};
@@ -231,13 +231,9 @@
             if (!confirm(`¿Confirmas cambiar el despacho de ${idPedido} a "${nuevoEstado}"?`)) return;
 
             try {
-                const url = `${URL_APPS_SCRIPT}?action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
-                
-                // Usamos no-cors o un fetch limpio
+                const url = `${URL_APPS_SCRIPT}&action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
                 await fetch(url, { method: 'GET', mode: 'no-cors' });
                 
-                // Como 'no-cors' no deja leer el JSON de respuesta por seguridad, 
-                // damos por exitoso el envío y recargamos los datos tras 1 segundo
                 alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
                 setTimeout(cargarPedidos, 1000);
             } catch (e) {
@@ -249,8 +245,7 @@
             if (!confirm(`¿Confirmas que el pedido ${idPedido} ha sido pagado?`)) return;
 
             try {
-                const url = `${URL_APPS_SCRIPT}?action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
-                
+                const url = `${URL_APPS_SCRIPT}&action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
                 await fetch(url, { method: 'GET', mode: 'no-cors' });
                 
                 alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
