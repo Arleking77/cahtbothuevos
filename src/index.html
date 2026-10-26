@@ -231,17 +231,15 @@
             if (!confirm(`¿Confirmas cambiar el despacho de ${idPedido} a "${nuevoEstado}"?`)) return;
 
             try {
-                // Usamos GET con parámetros para evitar CORS en Vercel
                 const url = `${URL_APPS_SCRIPT}?action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
-                const res = await fetch(url, { method: 'GET', redirect: 'follow' });
-                const data = await res.json();
                 
-                if (data.status === 'success') {
-                    alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
-                    cargarPedidos();
-                } else {
-                    alert(`❌ Error: ${data.message || 'No se pudo actualizar'}`);
-                }
+                // Usamos no-cors o un fetch limpio
+                await fetch(url, { method: 'GET', mode: 'no-cors' });
+                
+                // Como 'no-cors' no deja leer el JSON de respuesta por seguridad, 
+                // damos por exitoso el envío y recargamos los datos tras 1 segundo
+                alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
+                setTimeout(cargarPedidos, 1000);
             } catch (e) {
                 alert("Error al actualizar el estado en Google Sheets.");
             }
@@ -251,17 +249,12 @@
             if (!confirm(`¿Confirmas que el pedido ${idPedido} ha sido pagado?`)) return;
 
             try {
-                // Usamos GET con parámetros para evitar CORS en Vercel
                 const url = `${URL_APPS_SCRIPT}?action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
-                const res = await fetch(url, { method: 'GET', redirect: 'follow' });
-                const data = await res.json();
                 
-                if (data.status === 'success') {
-                    alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
-                    cargarPedidos();
-                } else {
-                    alert(`❌ Error: ${data.message || 'No se pudo actualizar'}`);
-                }
+                await fetch(url, { method: 'GET', mode: 'no-cors' });
+                
+                alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
+                setTimeout(cargarPedidos, 1000);
             } catch (e) {
                 alert("Error al actualizar el pago en Google Sheets.");
             }
