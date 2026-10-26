@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Despachos - Huevos Santa Estela</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 pb-12">
+
+    <!-- Header -->
+    <header class="bg-amber-500 text-white p-4 shadow-md sticky top-0 z-50">
+        <div class="max-w-md mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-truck-fast text-2xl"></i>
+                <h1 class="font-bold text-lg leading-tight">Huevos Santa Estela<br><span class="text-xs font-normal opacity-90">Panel de Despacho</span></h1>
+            </div>
+            <button onclick="cargarPedidos()" class="bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1 shadow">
+                <i class="fa-solid fa-rotate-right" id="icon-reload"></i> Actualizar
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-md mx-auto p-4 space-y-4">
+
+        <!-- Métricas Rápidas -->
+        <div class="grid grid-cols-3 gap-2 text-center text-xs font-bold">
+            <div class="bg-white p-3 rounded-xl shadow border-l-4 border-yellow-500">
+                <p class="text-gray-500 uppercase">Pendientes</p>
+                <p id="count-pendiente" class="text-xl font-extrabold text-yellow-600">0</p>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow border-l-4 border-blue-500">
+                <p class="text-gray-500 uppercase">En Camino</p>
+                <p id="count-encamino" class="text-xl font-extrabold text-blue-600">0</p>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow border-l-4 border-green-500">
+                <p class="text-gray-500 uppercase">Entregados</p>
+                <p id="count-entregado" class="text-xl font-extrabold text-green-600">0</p>
+            </div>
+        </div>
+
+        <!-- Filtros y Búsqueda -->
+        <div class="space-y-2">
+            <input type="text" id="input-search" onkeyup="filtrarPedidos()" placeholder="🔍 Buscar por cliente, dirección o ID..." class="w-full p-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm">
+            
+            <div class="flex gap-2 text-xs font-semibold overflow-x-auto pb-1">
+                <button onclick="setFiltro('Todos')" id="btn-filtro-todos" class="px-3 py-1.5 rounded-full bg-amber-500 text-white shadow">Todos</button>
+                <button onclick="setFiltro('Pendiente')" id="btn-filtro-pendiente" class="px-3 py-1.5 rounded-full bg-gray-200 text-gray-700">Pendientes</button>
+                <button onclick="setFiltro('En Camino')" id="btn-filtro-encamino" class="px-3 py-1.5 rounded-full bg-gray-200 text-gray-700">En Camino</button>
+                <button onclick="setFiltro('Entregado')" id="btn-filtro-entregado" class="px-3 py-1.5 rounded-full bg-gray-200 text-gray-700">Entregados</button>
+            </div>
+        </div>
+
+        <!-- Lista de Tarjetas de Pedido -->
+        <div id="lista-pedidos" class="space-y-3">
+            <p class="text-center text-sm text-gray-500 py-8">Cargando pedidos de hoy...</p>
+        </div>
+
+    </main>
+
+    <script>
+        const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec";
+
+        let todosLosPedidos = [];
+        let mapaProductos = {};
+        let filtroActual = 'Todos';
+
+        async function cargarPedidos() {
+            const iconReload = document.getElementById('icon-reload');
+            iconReload.classList.add('fa-spin');
+
+            try {
+                const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
+                const data = await res.json();
+                
+                if (data.stock && data.stock.length > 0) {
+                    data.stock.forEach(prod => {
+                        mapaProductos[prod.id] = `${prod.categoria} - ${prod.descripcion}`;
+                    });
+                }
+
+                todosLosPedidos = data.pedidos || [];
+                actualizarContadores();
+                filtrarPedidos();
+            } catch (error) {
+                console.error("Error al cargar pedidos:", error);
+                document.getElementById('lista-pedidos').innerHTML = `
+                    <div class="bg-red-50 text-red-700 p-4 rounded-xl text-center text-sm">
+                        ⚠️ Error al conectar con Google Sheets. Revisa la conexión.
+                    </div>`;
+            } finally {
+                iconReload.classList.remove('fa-spin');
+            }
+        }
+
+        function actualizarContadores() {
+            document.getElementById('count-pendiente').innerText = todosLosPedidos.filter(p => p.estado.toLowerCase().includes('pendiente')).length;
+            document.getElementById('count-encamino').innerText = todosLosPedidos.filter(p => p.estado.toLowerCase().includes('camino')).length;
+            document.getElementById('count-entregado').innerText = todosLosPedidos.filter(p => p.estado.toLowerCase().includes('entregado')).length;
+        }
+
+        function setFiltro(filtro) {
+            filtroActual = filtro;
+            ['todos', 'pendiente', 'encamino', 'entregado'].forEach(f => {
+                const btn = document.getElementById(`btn-filtro-${f}`);
+                if (f === filtro.toLowerCase().replace(' ', '')) {
+                    btn.className = "px-3 py-1.5 rounded-full bg-amber-500 text-white shadow";
+                } else {
+                    btn.className = "px-3 py-1.5 rounded-full bg-gray-200 text-gray-700";
+                }
+            });
+            filtrarPedidos();
+        }
+
+        function filtrarPedidos() {
+            const query = document.getElementById('input-search').value.toLowerCase();
+            const container = document.getElementById('lista-pedidos');
+            container.innerHTML = '';
+
+            const filtrados = todosLosPedidos.filter(p => {
+                const coincideFiltro = (filtroActual === 'Todos') || 
+                    (filtroActual === 'Pendiente' && p.estado.toLowerCase().includes('pendiente')) ||
+                    (filtroActual === 'En Camino' && p.estado.toLowerCase().includes('camino')) ||
+                    (filtroActual === 'Entregado' && p.estado.toLowerCase().includes('entregado'));
+
+                const coincideSearch = p.cliente.toLowerCase().includes(query) || 
+                                       p.direccion.toLowerCase().includes(query) || 
+                                       p.idPedido.toLowerCase().includes(query);
+
+                return coincideFiltro && coincideSearch;
+            });
+
+            if (filtrados.length === 0) {
+                container.innerHTML = `<p class="text-center text-sm text-gray-500 py-8">No hay pedidos que coincidan.</p>`;
+                return;
+            }
+
+            filtrados.reverse().forEach(p => {
+                const badgeColor = p.estado.toLowerCase().includes('entregado') ? 'bg-green-100 text-green-800 border-green-300' :
+                                   p.estado.toLowerCase().includes('camino') ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                                   'bg-yellow-100 text-yellow-800 border-yellow-300';
+
+                const estadoPagoRaw = (p.estadoPago || '').toLowerCase();
+                const esPagado = estadoPagoRaw === 'pagado';
+                
+                const pagoColor = esPagado ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-red-100 text-red-800 border-red-300';
+                const pagoTexto = esPagado ? '🟢 PAGADO' : `🔴 COBRAR: $${p.total} CLP (${p.metodoPago})`;
+
+                const nombreProductoReal = mapaProductos[p.idProducto] || p.idProducto || 'Huevos Santa Estela';
+
+                const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.direccion + ', Chile')}`;
+                const wazeUrl = `https://waze.com/ul?q=${encodeURIComponent(p.direccion + ', Chile')}&navigate=yes`;
+                const telLlamada = p.telefono && p.telefono !== 'Pedir teléfono' ? `tel:${p.telefono}` : '#';
+                const waUrl = p.telefono && p.telefono !== 'Pedir teléfono' ? `https://wa.me/${p.telefono.replace(/[^0-9]/g, '')}` : '#';
+
+                const html = `
+                    <div class="bg-white p-4 rounded-xl shadow border border-gray-200 space-y-3">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span class="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">${p.idPedido}</span>
+                                <h3 class="font-bold text-base text-gray-900 mt-1">${p.cliente}</h3>
+                            </div>
+                            <span class="text-xs px-2.5 py-1 rounded-full border font-semibold ${badgeColor}">${p.estado}</span>
+                        </div>
+
+                        <!-- Indicador y Botón de Estado de Pago -->
+                        <div class="p-2.5 rounded-lg border text-xs font-bold flex flex-col gap-2 ${pagoColor}">
+                            <div class="text-center">${pagoTexto}</div>
+                            ${!esPagado ? `
+                                <button onclick="marcarPagado('${p.idPedido}')" class="bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-3 rounded-lg text-xs font-bold shadow flex items-center justify-center gap-1">
+                                    <i class="fa-solid fa-check-to-slot"></i> Marcar como Pagado (Efectivo/Transferencia)
+                                </button>
+                            ` : ''}
+                        </div>
+
+                        <!-- Detalle Producto -->
+                        <div class="bg-amber-50 p-2.5 rounded-lg border border-amber-200 text-xs text-amber-900">
+                            <p class="font-bold flex items-center gap-1.5">
+                                <i class="fa-solid fa-box text-amber-600"></i> ${nombreProductoReal}
+                            </p>
+                            <p class="text-xs text-amber-700 mt-0.5">Cantidad: <strong>${p.cantidad} unidad(es)</strong> | Total: <strong>$${p.total} CLP</strong></p>
+                        </div>
+
+                        <div class="text-xs space-y-1 text-gray-600">
+                            <p class="flex items-center gap-2"><i class="fa-solid fa-location-dot text-red-500 text-sm"></i> <span class="font-medium text-gray-800">${p.direccion}</span></p>
+                            <p class="flex items-center gap-2"><i class="fa-solid fa-phone text-green-600 text-sm"></i> Teléfono: ${p.telefono || 'No registrado'}</p>
+                        </div>
+
+                        <!-- Botones GPS -->
+                        <div class="grid grid-cols-2 gap-2 pt-1 text-xs">
+                            <a href="${mapUrl}" target="_blank" class="bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 rounded-lg text-center font-semibold flex items-center justify-center gap-1 border">
+                                <i class="fa-solid fa-map-location-dot text-blue-600"></i> Google Maps
+                            </a>
+                            <a href="${wazeUrl}" target="_blank" class="bg-sky-50 hover:bg-sky-100 text-sky-800 py-2 rounded-lg text-center font-semibold flex items-center justify-center gap-1 border border-sky-200">
+                                <i class="fa-brands fa-waze text-sky-500"></i> Waze
+                            </a>
+                        </div>
+
+                        <!-- Botones Contacto -->
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <a href="${telLlamada}" class="bg-green-50 hover:bg-green-100 text-green-800 py-1.5 rounded-lg text-center font-semibold flex items-center justify-center gap-1 border border-green-200">
+                                <i class="fa-solid fa-phone"></i> Llamar
+                            </a>
+                            <a href="${waUrl}" target="_blank" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-1.5 rounded-lg text-center font-semibold flex items-center justify-center gap-1 border border-emerald-200">
+                                <i class="fa-brands fa-whatsapp text-emerald-600"></i> WhatsApp
+                            </a>
+                        </div>
+
+                        <!-- Cambio de Estado Despacho -->
+                        <div class="pt-2 border-t flex gap-2">
+                            <button onclick="cambiarEstado('${p.idPedido}', 'En Camino')" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-xs font-bold shadow">
+                                🚚 En Camino
+                            </button>
+                            <button onclick="cambiarEstado('${p.idPedido}', 'Entregado')" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg text-xs font-bold shadow">
+                                ✅ Entregado
+                            </button>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += html;
+            });
+        }
+
+        async function cambiarEstado(idPedido, nuevoEstado) {
+            if (!confirm(`¿Confirmas cambiar el despacho de ${idPedido} a "${nuevoEstado}"?`)) return;
+
+            try {
+                const res = await fetch(URL_APPS_SCRIPT, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'updateStatus',
+                        idPedido: idPedido,
+                        nuevoEstado: nuevoEstado
+                    })
+                });
+
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
+                    cargarPedidos();
+                } else {
+                    alert(`❌ Error: ${data.message}`);
+                }
+            } catch (e) {
+                alert("Error al actualizar el estado en Google Sheets.");
+            }
+        }
+
+        async function marcarPagado(idPedido) {
+            if (!confirm(`¿Confirmas que el pedido ${idPedido} ha sido pagado?`)) return;
+
+            try {
+                const res = await fetch(URL_APPS_SCRIPT, {
+                    method: 'POST',
+                    redirect: 'follow',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'updatePayment',
+                        idPedido: idPedido
+                    })
+                });
+
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
+                    cargarPedidos();
+                } else {
+                    alert(`❌ Error: ${data.message}`);
+                }
+            } catch (e) {
+                alert("Error al actualizar el pago en Google Sheets.");
+            }
+        }
+
+        window.onload = cargarPedidos;
+    </script>
+</body>
+</html>
