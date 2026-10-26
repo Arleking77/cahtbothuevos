@@ -64,8 +64,8 @@
     </main>
 
     <script>
-        // Usamos corsproxy.io para saltarnos cualquier bloqueo de CORS en Vercel
-        const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec";
+        // URL configurada mediante proxy CORS para evitar bloqueos en Vercel
+        const URL_APPS_SCRIPT = "https://corsproxy.io/?https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec";
 
         let todosLosPedidos = [];
         let mapaProductos = {};
@@ -92,7 +92,7 @@
                 console.error("Error al cargar pedidos:", error);
                 document.getElementById('lista-pedidos').innerHTML = `
                     <div class="bg-red-50 text-red-700 p-4 rounded-xl text-center text-sm">
-                        ⚠️ Error al conectar con Google Sheets. Revisa la conexión.
+                        ⚠️ Error al conectar con Google Sheets. Revisa la consola.
                     </div>`;
             } finally {
                 iconReload.classList.remove('fa-spin');
@@ -231,7 +231,7 @@
             if (!confirm(`¿Confirmas cambiar el despacho de ${idPedido} a "${nuevoEstado}"?`)) return;
 
             try {
-                const url = `${URL_APPS_SCRIPT}&action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
+                const url = `https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec?action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
                 await fetch(url, { method: 'GET', mode: 'no-cors' });
                 
                 alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
@@ -245,7 +245,7 @@
             if (!confirm(`¿Confirmas que el pedido ${idPedido} ha sido pagado?`)) return;
 
             try {
-                const url = `${URL_APPS_SCRIPT}&action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
+                const url = `https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec?action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
                 await fetch(url, { method: 'GET', mode: 'no-cors' });
                 
                 alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
