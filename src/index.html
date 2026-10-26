@@ -227,12 +227,17 @@
             });
         }
 
-        async function cambiarEstado(idPedido, nuevoEstado) {
+       async function cambiarEstado(idPedido, nuevoEstado) {
             if (!confirm(`¿Confirmas cambiar el despacho de ${idPedido} a "${nuevoEstado}"?`)) return;
 
             try {
                 const url = `${URL_APPS_SCRIPT}?action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
-                await fetch(url, { method: 'GET', mode: 'no-cors' });
+                
+                // Forzamos estrictamente GET con no-cors para evitar el preflight de POST
+                await fetch(url, { 
+                    method: 'GET', 
+                    mode: 'no-cors' 
+                });
                 
                 alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
                 setTimeout(cargarPedidos, 1000);
@@ -246,7 +251,12 @@
 
             try {
                 const url = `${URL_APPS_SCRIPT}?action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
-                await fetch(url, { method: 'GET', mode: 'no-cors' });
+                
+                // Forzamos estrictamente GET con no-cors
+                await fetch(url, { 
+                    method: 'GET', 
+                    mode: 'no-cors' 
+                });
                 
                 alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
                 setTimeout(cargarPedidos, 1000);
