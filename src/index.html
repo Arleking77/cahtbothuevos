@@ -65,7 +65,7 @@
 
     <script>
         // URL directa de tu Web App de Google Apps Script
-        const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbx-1AwZt8c4IQv2mEtqfmgttnRGXZLVdW7v4zU6J9BF2Q22XtN1qMEta0NXWrK6nPI-/exec";
+        const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbzCZaLaH2v9isoTE3uTXO5bVY_zgFt-BN0-5kEpf0pq1VmKMNFat14mjGVuwDXiXJsQ/exec";
 
         let todosLosPedidos = [];
         let mapaProductos = {};
@@ -232,12 +232,12 @@
 
             try {
                 const url = `${URL_APPS_SCRIPT}?action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}`;
-                await fetch(url, { method: 'GET', redirect: 'follow' });
+                await fetch(url, { method: 'GET', mode: 'no-cors' });
                 
                 alert(`✅ Pedido ${idPedido} actualizado a "${nuevoEstado}".`);
                 setTimeout(cargarPedidos, 1000);
             } catch (e) {
-                alert("Error al actualizar el estado en Google Sheets.");
+                alert(`❌ Error al actualizar el pedido ${idPedido}`);
             }
         }
 
@@ -246,12 +246,12 @@
 
             try {
                 const url = `${URL_APPS_SCRIPT}?action=updatePayment&idPedido=${encodeURIComponent(idPedido)}`;
-                await fetch(url, { method: 'GET', redirect: 'follow' });
+                await fetch(url, { method: 'GET', mode: 'no-cors' });
                 
                 alert(`✅ El pedido ${idPedido} ahora figura como PAGADO.`);
                 setTimeout(cargarPedidos, 1000);
             } catch (e) {
-                alert("Error al actualizar el pago en Google Sheets.");
+                alert(`❌ Error al actualizar el pago del pedido ${idPedido}`);
             }
         }
 
