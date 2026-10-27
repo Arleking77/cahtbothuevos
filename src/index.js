@@ -56,13 +56,23 @@ async function obtenerDatosSheets() {
     }
 }
 
-// B. Registrar un nuevo pedido y actualizar cliente en Sheets (12 columnas + Columna E Teléfono)
+// B. Registrar un nuevo pedido y actualizar cliente en Sheets de forma limpia
 async function registrarPedidoSheets(idPedido, idProducto, cantidad, clienteJid, total, metodoPago, direccion, nombreCliente, telefonoContacto, linkPago) {
     try {
         if (!URL_APPS_SCRIPT) return;
         
+        // Limpiar el teléfono para extraer solo los números reales y evitar que se guarde mal
+        let telefonoLimpidio = telefonoContacto ? String(telefonoContacto).replace(/\D/g, '') : '';
+        if (!telefonoLimpidio || telefonoLimpidio.length < 8) {
+            telefonoLimpidio = clienteJid.split('@')[0].replace(/\D/g, '');
+        }
+        // Asegurar formato chileno si viene sin código de país
+        if (telefonoLimpidio.length === 9 && telefonoLimpidio.startsWith('9')) {
+            telefonoLimpidio = '56' + telefonoLimpidio;
+        }
+
         const keyCliente = clienteJid.split('@')[0];
-        console.log(`[Google Sheets] Guardando pedido ${idPedido} para ${keyCliente}...`);
+        console.log(`[Google Sheets] Guardando pedido ${idPedido} para ${keyCliente} (Tel: ${telefonoLimpidio})...`);
 
         const res = await fetch(URL_APPS_SCRIPT, {
             method: 'POST',
@@ -73,8 +83,8 @@ async function registrarPedidoSheets(idPedido, idProducto, cantidad, clienteJid,
                 telefono: keyCliente,
                 cliente: clienteJid,
                 nombreCliente: nombreCliente || 'Cliente WhatsApp',
-                telefonoContacto: telefonoContacto || keyCliente,
-                idProducto: idProducto,
+                telefonoContacto: '+' + telefonoLimpidio,
+                idProducto: idProducto || 'PROD-001', // Evita que quede estático o vacío
                 cantidad: parseInt(cantidad) || 1,
                 total: parseInt(total) || 0,
                 metodoPago: metodoPago || 'Por confirmar',
@@ -172,9 +182,17 @@ async function iniciarBot() {
         }
     });
 
+    // Memoria para evitar duplicados si WhatsApp reintenta el evento de mensaje
+    const mensajesProcesadosRecent = new Set();
+
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
+
+        const messageId = msg.key.id;
+        if (mensajesProcesadosRecent.has(messageId)) return; // Ignora duplicados del mismo mensaje
+        mensajesProcesadosRecent.add(messageId);
+        setTimeout(() => mensajesProcesadosRecent.delete(messageId), 10000); // Limpia registro a los 10s
 
         const currentJid = msg.key.remoteJid;
         const textoCliente = msg.message.conversation || msg.message.extendedTextMessage?.text;
@@ -190,11 +208,9 @@ async function iniciarBot() {
             const keyCliente = currentJid.split('@')[0];
             const esLid = currentJid.includes('@lid');
             
-            // Buscar si el cliente ya está registrado en la tabla Clientes
             const clienteRegistrado = datosSheets.clientes?.[keyCliente] || datosSheets.clientes?.[currentJid] || null;
             const telefonoOficial = clienteRegistrado?.telefono || (!esLid ? keyCliente : null);
 
-            // Filtrar pedidos del cliente actual
             const pedidosCliente = (datosSheets.pedidos || []).filter(p => 
                 p.cliente === currentJid || p.cliente.includes(keyCliente) || (clienteRegistrado && p.cliente.includes(clienteRegistrado.nombre))
             );
@@ -213,17 +229,26 @@ async function iniciarBot() {
             const prompt = `Eres la asistente virtual oficial del "Gallinero Huevos Santa Estela". Atiendes con amabilidad, rapidez y calidez en español chileno.
 
 BASE DE DATOS DINÁMICA (DESDE GOOGLE SHEETS):
-- INVENTARIO Y PRODUCTOS: ${inventarioTexto}
-- HISTORIAL DE PEDIDOS DE ESTE CLIENTE: ${pedidosClienteTexto}
-- CONFIGURACIÓN Y REDES: ${configTexto}
-- CONTACTO VENDEDORES / DISTRIBUIDORES: ${vendedoresTexto}
-- PREGUNTAS FRECUENTES (FAQ): ${faqTexto}
+- INVENTARIO Y PRODUCTOS: 
+${inventarioTexto}
+- HISTORIAL DE PEDIDOS DE ESTE CLIENTE: 
+${pedidosClienteTexto}
+- CONFIGURACIÓN Y REDES: 
+${configTexto}
+- CONTACTO VENDEDORES / DISTRIBUIDORES: 
+${vendedoresTexto}
+- PREGUNTAS FRECUENTES (FAQ): 
+${faqTexto}
 
 DATOS DEL CLIENTE EN LA TABLA CLIENTES / WHATSAPP:
-- JID Actual: ${currentJid}
-- Teléfono Registrado: ${telefonoOficial ? telefonoOficial : 'NO REGISTRADO (Requiere pedir número)'}
-- Nombre Registrado: ${clienteRegistrado ? clienteRegistrado.nombre : 'No registrado aún'}
-- Dirección Registrada: ${clienteRegistrado ? clienteRegistrado.direccion : 'No registrada aún'}
+- JID Actual: 
+${currentJid}
+- Teléfono Registrado: 
+${telefonoOficial ? telefonoOficial : 'NO REGISTRADO (Requiere pedir número)'}
+- Nombre Registrado: 
+${clienteRegistrado ? clienteRegistrado.nombre : 'No registrado aún'}
+- Dirección Registrada: 
+${clienteRegistrado ? clienteRegistrado.direccion : 'No registrada aún'}
 
 REGLAS DE ATENCIÓN HÍBRIDA:
 1. Si el cliente saluda o pregunta en general, atiéndelo amablemente e incluye al final una guía opcional:
@@ -241,9 +266,10 @@ REGLAS DE ATENCIÓN HÍBRIDA:
 Historial de esta conversación:
 ${contextoHistorial}
 
-Responde de forma amable y breve (máximo 3 frases) representando a Huevos Santa Estela: "${textoCliente}"`;
+Responde de forma amable y breve (máximo 3 frases) representando a Huevos Santa Estela. **IMPORTANTE: Si incluyes la etiqueta [REGISTRAR_PEDIDO:...], NO escribas enlaces de pago en tu texto, el sistema los agregará automáticamente**: "${textoCliente}"`;
 
             let respuestaIA = await generarConReintentos(prompt);
+            let linkPagoGenerado = "";
 
             if (respuestaIA.includes('[REGISTRAR_PEDIDO:')) {
                 const match = respuestaIA.match(/\[REGISTRAR_PEDIDO:(.*?)\]/);
@@ -251,7 +277,6 @@ Responde de forma amable y breve (máximo 3 frases) representando a Huevos Santa
                     try {
                         const datosPedido = JSON.parse(match[1]);
                         const idPedido = 'PED-' + Date.now().toString().slice(-4);
-                        let linkPagoGenerado = "";
 
                         if (datosPedido.metodoPago.toLowerCase().includes('mercado')) {
                             linkPagoGenerado = await generarLinkMercadoPago(
