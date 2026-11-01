@@ -18,27 +18,22 @@ if (MP_ACCESS_TOKEN) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Lista de modelos actualizados en orden de prioridad para el Fallback automático
-const MODELOS_GEMINI = ["gemini-3.8-flash", "gemini-2.5-flash"];
+// Modelo principal estable y directo
+const MODELO_GEMINI = "gemini-3.8-flash";
 
-async function generarRespuestaConFallback(promptSistema, textoUsuario) {
-    let ultimaExcepcion = null;
-    for (const nombreModelo of MODELOS_GEMINI) {
-        try {
-            const modelo = genAI.getGenerativeModel({ model: nombreModelo });
-            const chat = modelo.startChat({ history: [{ role: "user", parts: [{ text: promptSistema }] }] });
-            const result = await chat.sendMessage(textoUsuario);
-            return result.response.text();
-        } catch (error) {
-            console.warn(`[Gemini Fallback] El modelo ${nombreModelo} falló (${error.message}). Probando siguiente...`);
-            ultimaExcepcion = error;
-        }
+async function generarRespuestaIA(promptSistema, textoUsuario) {
+    try {
+        const modelo = genAI.getGenerativeModel({ model: MODELO_GEMINI });
+        const chat = modelo.startChat({ history: [{ role: "user", parts: [{ text: promptSistema }] }] });
+        const result = await chat.sendMessage(textoUsuario);
+        return result.response.text();
+    } catch (error) {
+        console.error(`[Gemini Error] Falló el modelo ${MODELO_GEMINI}:`, error.message);
+        throw error;
     }
-    throw ultimaExcepcion || new Error("Todos los modelos de Gemini fallaron.");
 }
 
 const processedMessages = new Set();
-const userTimers = new Map();
 
 async function generarLinkMercadoPago(idPedido, total, descripcion) {
     try {
@@ -99,7 +94,7 @@ async function obtenerDatosSheets() {
         const text = await res.text();
         return JSON.parse(text);
     } catch (e) {
-        console.error("[Sheets Error]:", e.message);
+        console.error("[Sheets Error - Obtener Datos]:", e.message);
         return { stock: [], clientes: {}, despachos: [], vendedores: [] };
     }
 }
@@ -157,16 +152,27 @@ async function startBot() {
             const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
             if (!textMessage) return;
 
+            // Obtener datos frescos del Excel / Apps Script
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const infoClientes = datosSheet.clientes || {};
             const lugaresDespacho = datosSheet.despachos || [];
             const listaVendedoresSheets = datosSheet.vendedores || [];
 
-            const telefonoLimpio = currentJid.split('@')[0];
-            let clienteConocido = infoClientes[telefonoLimpio] || null;
-            const textoLimpio = textMessage.trim();
+            const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
+            let clienteConocido = null;
 
+            // Búsqueda robusta del cliente en el objeto de Sheets (comparando variantes del número)
+            for (let telKey in infoClientes) {
+                const keyClean = String(telKey).replace(/\D/g, '');
+                if (keyClean === telefonoLimpio || telefonoLimpio.endsWith(keyClean) || keyClean.endsWith(telefonoLimpio)) {
+                    clienteConocido = infoClientes[telKey];
+                    break;
+                }
+            }
+
+            const textoLimpio = textMessage.trim();
+            // Búsqueda por código de cliente numérico si no se encontró por teléfono
             if (!clienteConocido && /^\d{1,4}$/.test(textoLimpio)) {
                 for (let tel in infoClientes) {
                     if (infoClientes[tel].codigo === textoLimpio || infoClientes[tel].id === textoLimpio) {
@@ -187,14 +193,14 @@ async function startBot() {
             DATOS DEL CLIENTE DETECTADO: ${JSON.stringify(clienteConocido || { telefono: telefonoLimpio, nuevo: true })};
 
             INSTRUCCIONES CLAVE:
-            1. RECONOCIMIENTO: Si el cliente está en los datos detectados, salúdalo por su nombre y dile que conocemos su comuna registrada. Si no está, salúdalo cordialmente y tómale su comuna.
+            1. RECONOCIMIENTO: Si en "DATOS DEL CLIENTE DETECTADO" aparece un nombre o comuna registrada (no dice "nuevo: true"), salúdalo por su nombre y recuérdale su comuna. Si es nuevo, salúdalo cordialmente y pídele amablemente su nombre y comuna.
             2. FORMATO DE PRECIOS: Muestra SOLAMENTE el Tipo de Huevo, el Formato y el Valor exacto según su zona (Linares, Santiago Sector 1 o Santiago Sector 2). NUNCA menciones la palabra stock.
             3. ZONAS Y ALERTAS: Si es de una comuna fuera de rango (ej. San Bernardo), explícale que se aplica tarifa de referencia de Santiago Sector 2 y que se validará con el equipo.
-            4. CIERRE DE PEDIDO: Cuando tengas producto, cantidad, método de pago ("Mercado Pago" o "Contra Entrega") y dirección, agrega al final el JSON:
+            4. CIERRE DE PEDIDO: Cuando tengas producto, cantidad, método de pago ("Mercado Pago" o "Contra Entrega") y dirección, agrega al final el JSON exacto:
             [REGISTRAR_PEDIDO:{"idPedido":"PED-${Math.floor(1000 + Math.random() * 9000)}","idProducto":"<ID>","cantidad":<NUM>,"total":<NUM>,"metodoPago":"<METODO>","direccion":"<DIRECCION>","nombreCliente":"<NOMBRE>","telefonoContacto":"<TEL>"}]
             `;
 
-            const respuestaIA = await generarRespuestaConFallback(promptSistema, textMessage);
+            const respuestaIA = await generarRespuestaIA(promptSistema, textMessage);
 
             const matchPedido = respuestaIA.match(/\[REGISTRAR_PEDIDO:(.*?)\]/);
             if (matchPedido) {
