@@ -18,8 +18,8 @@ if (MP_ACCESS_TOKEN) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Lista de modelos en orden de prioridad (Multimodal / Fallback automático)
-const MODELOS_GEMINI = ["gemini-3.8-flash"];
+// Lista de modelos actualizados en orden de prioridad para el Fallback automático
+const MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
 
 async function generarRespuestaConFallback(promptSistema, textoUsuario) {
     let ultimaExcepcion = null;
@@ -111,7 +111,6 @@ async function notificarVendedores(sock, clienteInfo, comunaIngresada, listaVend
                           `📍 *Comuna ingresada*: ${comunaIngresada}\n` +
                           `⚠️ *Estado*: Requiere validación y posible cobro extra (Se usó referencia Stgo Sector 2).`;
 
-    // Si la hoja tiene vendedores configurados, los usa; sino, usa una lista de respaldo
     const vendedoresACotizar = (listaVendedores && listaVendedores.length > 0) ? listaVendedores : [
         { nombre: 'Lorenzo Macaya', telefono: '56982295850' },
         { nombre: 'Hugo Silva', telefono: '56990011731' }
