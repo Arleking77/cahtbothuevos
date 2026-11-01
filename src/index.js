@@ -18,17 +18,17 @@ if (MP_ACCESS_TOKEN) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Modelo principal estable y directo
-const MODELO_GEMINI = "gemini-3.8-flash";
+// Usamos el modelo estable optimizado para alta disponibilidad y bajo costo
+const MODELO_ESTABLE = "gemini-3.5-flash-lite";
 
 async function generarRespuestaIA(promptSistema, textoUsuario) {
     try {
-        const modelo = genAI.getGenerativeModel({ model: MODELO_GEMINI });
+        const modelo = genAI.getGenerativeModel({ model: MODELO_ESTABLE });
         const chat = modelo.startChat({ history: [{ role: "user", parts: [{ text: promptSistema }] }] });
         const result = await chat.sendMessage(textoUsuario);
         return result.response.text();
     } catch (error) {
-        console.error(`[Gemini Error] Falló el modelo ${MODELO_GEMINI}:`, error.message);
+        console.error(`[Gemini Error con ${MODELO_ESTABLE}]:`, error.message);
         throw error;
     }
 }
@@ -162,7 +162,7 @@ async function startBot() {
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
             let clienteConocido = null;
 
-            // Búsqueda robusta del cliente en el objeto de Sheets (comparando variantes del número)
+            // Búsqueda robusta del cliente en el objeto de Sheets
             for (let telKey in infoClientes) {
                 const keyClean = String(telKey).replace(/\D/g, '');
                 if (keyClean === telefonoLimpio || telefonoLimpio.endsWith(keyClean) || keyClean.endsWith(telefonoLimpio)) {
@@ -172,7 +172,6 @@ async function startBot() {
             }
 
             const textoLimpio = textMessage.trim();
-            // Búsqueda por código de cliente numérico si no se encontró por teléfono
             if (!clienteConocido && /^\d{1,4}$/.test(textoLimpio)) {
                 for (let tel in infoClientes) {
                     if (infoClientes[tel].codigo === textoLimpio || infoClientes[tel].id === textoLimpio) {
