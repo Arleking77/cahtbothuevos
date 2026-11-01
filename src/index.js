@@ -93,8 +93,18 @@ async function obtenerDatosSheets() {
         const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
         const text = await res.text();
         const data = JSON.parse(text);
-        console.log(`[Sheets Debug] Catálogo: ${data.stock?.length || 0} productos, Clientes: ${Object.keys(data.clientes || {}).length}, Zonas: ${data.despachos?.length || 0}`);
-        return data;
+        
+        // Mapeo seguro contemplando 'despachos' o 'zonas' devueltos por el Apps Script
+        const listaZonas = data.despachos || data.zonas || [];
+        
+        console.log(`[Sheets Debug] Catálogo: ${data.stock?.length || 0} productos, Clientes: ${Object.keys(data.clientes || {}).length}, Zonas: ${listaZonas.length}`);
+        
+        return {
+            stock: data.stock || [],
+            clientes: data.clientes || {},
+            despachos: listaZonas,
+            vendedores: data.vendedores || []
+        };
     } catch (e) {
         console.error("[Sheets Error - Obtener Datos]:", e.message);
         return { stock: [], clientes: {}, despachos: [], vendedores: [] };
