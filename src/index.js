@@ -18,7 +18,7 @@ if (MP_ACCESS_TOKEN) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Usamos el modelo estable optimizado para alta disponibilidad y bajo costo
+// Modelo estable de alta disponibilidad para evitar errores de saturación
 const MODELO_ESTABLE = "gemini-3.5-flash-lite";
 
 async function generarRespuestaIA(promptSistema, textoUsuario) {
@@ -92,7 +92,9 @@ async function obtenerDatosSheets() {
         if (!URL_APPS_SCRIPT) return { stock: [], clientes: {}, despachos: [], vendedores: [] };
         const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
         const text = await res.text();
-        return JSON.parse(text);
+        const data = JSON.parse(text);
+        console.log(`[Sheets Debug] Catálogo: ${data.stock?.length || 0} productos, Clientes: ${Object.keys(data.clientes || {}).length}, Zonas: ${data.despachos?.length || 0}`);
+        return data;
     } catch (e) {
         console.error("[Sheets Error - Obtener Datos]:", e.message);
         return { stock: [], clientes: {}, despachos: [], vendedores: [] };
@@ -152,7 +154,7 @@ async function startBot() {
             const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
             if (!textMessage) return;
 
-            // Obtener datos frescos del Excel / Apps Script
+            // Obtener datos frescos del Excel
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const infoClientes = datosSheet.clientes || {};
@@ -162,7 +164,7 @@ async function startBot() {
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
             let clienteConocido = null;
 
-            // Búsqueda robusta del cliente en el objeto de Sheets
+            // Reconocimiento robusto del cliente
             for (let telKey in infoClientes) {
                 const keyClean = String(telKey).replace(/\D/g, '');
                 if (keyClean === telefonoLimpio || telefonoLimpio.endsWith(keyClean) || keyClean.endsWith(telefonoLimpio)) {
@@ -192,7 +194,7 @@ async function startBot() {
             DATOS DEL CLIENTE DETECTADO: ${JSON.stringify(clienteConocido || { telefono: telefonoLimpio, nuevo: true })};
 
             INSTRUCCIONES CLAVE:
-            1. RECONOCIMIENTO: Si en "DATOS DEL CLIENTE DETECTADO" aparece un nombre o comuna registrada (no dice "nuevo: true"), salúdalo por su nombre y recuérdale su comuna. Si es nuevo, salúdalo cordialmente y pídele amablemente su nombre y comuna.
+            1. RECONOCIMIENTO: Si en "DATOS DEL CLIENTE DETECTADO" aparece un nombre o dirección registrada (no dice "nuevo: true"), salúdalo por su nombre y recuérdale su ubicación. Si es nuevo, salúdalo cordialmente y pídele amablemente su nombre y comuna.
             2. FORMATO DE PRECIOS: Muestra SOLAMENTE el Tipo de Huevo, el Formato y el Valor exacto según su zona (Linares, Santiago Sector 1 o Santiago Sector 2). NUNCA menciones la palabra stock.
             3. ZONAS Y ALERTAS: Si es de una comuna fuera de rango (ej. San Bernardo), explícale que se aplica tarifa de referencia de Santiago Sector 2 y que se validará con el equipo.
             4. CIERRE DE PEDIDO: Cuando tengas producto, cantidad, método de pago ("Mercado Pago" o "Contra Entrega") y dirección, agrega al final el JSON exacto:
