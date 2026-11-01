@@ -19,7 +19,7 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Lista de modelos actualizados en orden de prioridad para el Fallback automático
-const MODELOS_GEMINI = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+const MODELOS_GEMINI = ["gemini-3.8-flash"];
 
 async function generarRespuestaConFallback(promptSistema, textoUsuario) {
     let ultimaExcepcion = null;
