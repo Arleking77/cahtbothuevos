@@ -1,113 +1,43 @@
-import 'dotenv/config';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
-import qrcode from 'qrcode-terminal';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
+import dotenv from 'dotenv';
+import http from 'http';
+import fetch from 'node-fetch';
 
-// ---------------------------------------------------------------------------
-// 1. CONFIGURACIÓN Y CLIENTES EXTERNOS
-// ---------------------------------------------------------------------------
+dotenv.config();
+
+const URL_APPS_SCRIPT = process.env.URL_APPS_SCRIPT;
+const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
+
+// Inicializar Mercado Pago si hay token
+let mpClient = null;
+if (MP_ACCESS_TOKEN) {
+    mpClient = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
+    console.log("[Mercado Pago] SDK inicializado correctamente.");
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-const URL_APPS_SCRIPT = process.env.URL_APPS_SCRIPT ? process.env.URL_APPS_SCRIPT.trim() : null;
-const mpClient = process.env.MP_ACCESS_TOKEN ? new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN.trim() }) : null;
+// Caché de mensajes para evitar duplicados en WhatsApp
+const processedMessages = new Set();
+// Control de temporizadores de inactividad por cliente (JID)
+const userTimers = new Map();
 
-// Memoria conversacional temporal por usuario (JID)
-const historialChat = new Map();
+// Contactos de Vendedores para alertas automáticas de despachos fuera de zona
+const VENDEDORES = [
+    { nombre: 'Lorenzo Macaya', telefono: '56982295850' },
+    { nombre: 'Hugo Silva', telefono: '56990011731' }
+];
 
-function obtenerHistorial(jid) {
-    if (!historialChat.has(jid)) historialChat.set(jid, []);
-    return historialChat.get(jid);
-}
-
-function guardarMensaje(jid, role, text) {
-    const historial = obtenerHistorial(jid);
-    historial.push({ role, text });
-    if (historial.length > 10) historial.shift(); // Mantiene los últimos 10 mensajes
-}
-
-// ---------------------------------------------------------------------------
-// 2. SERVICIOS Y APIS (Google Sheets & Mercado Pago)
-// ---------------------------------------------------------------------------
-
-// A. Consultar base de datos unificada desde Google Sheets
-async function obtenerDatosSheets() {
-    try {
-        if (!URL_APPS_SCRIPT) {
-            console.error("[Sheets Error] No se configuró URL_APPS_SCRIPT en el archivo .env");
-            return { stock: [], pedidos: [], clientes: {}, config: {}, vendedores: [], faq: [] };
-        }
-
-        const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
-        
-        if (!res.ok) {
-            console.error(`[Sheets Error] Estado HTTP ${res.status}: ${res.statusText}`);
-            return { stock: [], pedidos: [], clientes: {}, config: {}, vendedores: [], faq: [] };
-        }
-
-        const data = await res.json();
-        console.log("[Google Sheets] ✅ Datos JSON leídos con éxito desde Sheets.");
-        return data;
-
-    } catch (e) {
-        console.error("[Sheets Error] Error al consultar Google Sheets:", e.message);
-        return { stock: [], pedidos: [], clientes: {}, config: {}, vendedores: [], faq: [] };
-    }
-}
-
-// B. Registrar un nuevo pedido y actualizar cliente en Sheets de forma limpia
-async function registrarPedidoSheets(idPedido, idProducto, cantidad, clienteJid, total, metodoPago, direccion, nombreCliente, telefonoContacto, linkPago) {
-    try {
-        if (!URL_APPS_SCRIPT) return;
-        
-        // Limpiar el teléfono para extraer solo los números reales y evitar que se guarde mal
-        let telefonoLimpidio = telefonoContacto ? String(telefonoContacto).replace(/\D/g, '') : '';
-        if (!telefonoLimpidio || telefonoLimpidio.length < 8) {
-            telefonoLimpidio = clienteJid.split('@')[0].replace(/\D/g, '');
-        }
-        // Asegurar formato chileno si viene sin código de país
-        if (telefonoLimpidio.length === 9 && telefonoLimpidio.startsWith('9')) {
-            telefonoLimpidio = '56' + telefonoLimpidio;
-        }
-
-        const keyCliente = clienteJid.split('@')[0];
-        console.log(`[Google Sheets] Guardando pedido ${idPedido} para ${keyCliente} (Tel: ${telefonoLimpidio})...`);
-
-        const res = await fetch(URL_APPS_SCRIPT, {
-            method: 'POST',
-            redirect: 'follow',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                idPedido: idPedido,
-                telefono: keyCliente,
-                cliente: clienteJid,
-                nombreCliente: nombreCliente || 'Cliente WhatsApp',
-                telefonoContacto: '+' + telefonoLimpidio,
-                idProducto: idProducto || 'PROD-001', // Evita que quede estático o vacío
-                cantidad: parseInt(cantidad) || 1,
-                total: parseInt(total) || 0,
-                metodoPago: metodoPago || 'Por confirmar',
-                direccion: direccion || 'Por confirmar',
-                linkPago: linkPago || ''
-            })
-        });
-
-        const respText = await res.text();
-        console.log(`[Google Sheets] ✅ Respuesta del servidor: ${respText}`);
-    } catch (e) {
-        console.error("[Sheets Error] Error al guardar pedido en Sheets:", e.message);
-    }
-}
-
-// C. Generar link dinámico de Checkout Pro en Mercado Pago
+// A. Generar link dinámico de Checkout Pro en Mercado Pago
 async function generarLinkMercadoPago(idPedido, total, descripcion) {
     try {
         if (!mpClient) {
             console.log("[Mercado Pago] No hay MP_ACCESS_TOKEN. Usando link estático.");
-            return "link.mercadopago.cl/huevossantaestela";
+            return { initPoint: "link.mercadopago.cl/huevossantaestela", preferenceId: "ESTATICO" };
         }
-
         const preference = new Preference(mpClient);
         const result = await preference.create({
             body: {
@@ -128,192 +58,271 @@ async function generarLinkMercadoPago(idPedido, total, descripcion) {
                 auto_return: "approved"
             }
         });
-
-        console.log(`[Mercado Pago] ✅ Link generado para ${idPedido}: ${result.init_point}`);
-        return result.init_point;
+        console.log(`[Mercado Pago] ✅ Link generado para ${idPedido} (ID Pref: ${result.id}): ${result.init_point}`);
+        return { 
+            initPoint: result.init_point, 
+            preferenceId: result.id || 'DESC_MP' 
+        };
     } catch (error) {
         console.error("[Mercado Pago Error] Error al crear preferencia:", error.message);
-        return "link.mercadopago.cl/huevossantaestela";
+        return { initPoint: "link.mercadopago.cl/huevossantaestela", preferenceId: "ERROR_MP" };
     }
 }
 
-// D. Reintentos resilientes para llamadas a la IA
-const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// B. Registrar un nuevo pedido en Google Sheets
+async function registrarPedidoSheets(idPedido, idProducto, cantidad, clienteJid, total, metodoPago, direccion, nombreCliente, telefonoContacto, linkPago, idPagoMP) {
+    try {
+        if (!URL_APPS_SCRIPT) return;
+        
+        let telefonoLimpidio = telefonoContacto ? String(telefonoContacto).replace(/\D/g, '') : '';
+        if (!telefonoLimpidio || telefonoLimpidio.length < 8) {
+            telefonoLimpidio = clienteJid.split('@')[0].replace(/\D/g, '');
+        }
+        if (telefonoLimpidio.length === 9 && telefonoLimpidio.startsWith('9')) {
+            telefonoLimpidio = '56' + telefonoLimpidio;
+        }
+        const keyCliente = clienteJid.split('@')[0];
+        console.log(`[Google Sheets] Guardando pedido ${idPedido} con ID MP: ${idPagoMP}...`);
+        const res = await fetch(URL_APPS_SCRIPT, {
+            method: 'POST',
+            redirect: 'follow',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                idPedido: idPedido,
+                telefono: keyCliente,
+                cliente: clienteJid,
+                nombreCliente: nombreCliente || 'Cliente WhatsApp',
+                telefonoContacto: '+' + telefonoLimpidio,
+                idProducto: idProducto || 'PROD-001',
+                cantidad: parseInt(cantidad) || 1,
+                total: parseInt(total) || 0,
+                metodoPago: metodoPago || 'Por confirmar',
+                direccion: direccion || 'Por confirmar',
+                linkPago: linkPago || '',
+                idPagoMP: idPagoMP || ''
+            })
+        });
+        const respText = await res.text();
+        console.log(`[Google Sheets] ✅ Respuesta del servidor: ${respText}`);
+    } catch (e) {
+        console.error("[Sheets Error] Error al guardar pedido en Sheets:", e.message);
+    }
+}
 
-async function generarConReintentos(prompt, intentos = 3) {
-    for (let i = 1; i <= intentos; i++) {
+// C. Obtener datos desde Google Sheets (Inventario, Clientes y Despachos)
+async function obtenerDatosSheets() {
+    try {
+        if (!URL_APPS_SCRIPT) return { stock: [], clientes: {}, despachos: [] };
+        const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
+        const text = await res.text();
+        return JSON.parse(text);
+    } catch (e) {
+        console.error("[Sheets Error] Error al consultar Google Sheets:", e.message);
+        return { stock: [], clientes: {}, despachos: [] };
+    }
+}
+
+// D. Enviar notificación automática a los vendedores ante incidencias de despacho fuera de zona
+async function notificarVendedores(sock, clienteInfo, comunaIngresada) {
+    const mensajeAlerta = `🚨 *NUEVA INCIDENCIA / DESPACHO FUERA DE ZONA* 🚨\n\n` +
+                          `👤 *Cliente*: ${clienteInfo.nombre || 'Cliente WhatsApp'}\n` +
+                          `📱 *Teléfono*: ${clienteInfo.telefono}\n` +
+                          `📍 *Comuna ingresada*: ${comunaIngresada}\n` +
+                          `⚠️ *Estado*: Requiere validación de factibilidad y posible cobro extra por despacho (Se usó referencia Stgo Sector 2).`;
+
+    for (let v of VENDEDORES) {
+        const jidVendedor = v.telefono + '@s.whatsapp.net';
         try {
-            const result = await model.generateContent(prompt);
-            return result.response.text();
-        } catch (error) {
-            console.log(`[IA Warning] Intento ${i}/${intentos} falló (${error.status || '503'}). Reintentando en 2s...`);
-            if (i === intentos) throw error;
-            await esperar(2000);
+            await sock.sendMessage(jidVendedor, { text: mensajeAlerta });
+            console.log(`[Alerta Vendedor] Notificación enviada a ${v.nombre} (${v.telefono})`);
+        } catch (errVendedor) {
+            console.error(`[Error Alerta Vendedor] No se pudo enviar a ${v.nombre}:`, errVendedor.message);
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// 3. MOTOR PRINCIPAL DEL BOT (BAILEYS)
-// ---------------------------------------------------------------------------
-async function iniciarBot() {
+// E. Inicializar el Bot de WhatsApp con Baileys
+async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-
+    
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false
+        printQRInTerminal: true
     });
-
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            console.log('\n--- ESCANEA ESTE CÓDIGO QR CON TU WHATSAPP ---');
-            qrcode.generate(qr, { small: true });
-        }
-
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) iniciarBot();
+            console.log('Conexión cerrada. Reconectando...', shouldReconnect);
+            if (shouldReconnect) startBot();
         } else if (connection === 'open') {
             console.log('¡Bot de Huevos Santa Estela conectado con éxito a WhatsApp!');
         }
     });
 
-    // Memoria para evitar duplicados si WhatsApp reintenta el evento de mensaje
-    const mensajesProcesadosRecent = new Set();
-
-    sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-
-        const messageId = msg.key.id;
-        if (mensajesProcesadosRecent.has(messageId)) return; // Ignora duplicados del mismo mensaje
-        mensajesProcesadosRecent.add(messageId);
-        setTimeout(() => mensajesProcesadosRecent.delete(messageId), 10000); // Limpia registro a los 10s
-
-        const currentJid = msg.key.remoteJid;
-        const textoCliente = msg.message.conversation || msg.message.extendedTextMessage?.text;
-
-        if (!textoCliente) return;
-
-        console.log(`Mensaje recibido de ${currentJid}: ${textoCliente}`);
-
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
-            guardarMensaje(currentJid, 'user', textoCliente);
-            const datosSheets = await obtenerDatosSheets();
+            if (type !== 'notify') return;
+            const msg = messages[0];
+            if (!msg.message || msg.key.fromMe) return;
+
+            const messageId = msg.key.id;
+            if (processedMessages.has(messageId)) return;
+            processedMessages.add(messageId);
+            setTimeout(() => processedMessages.delete(messageId), 60000);
+
+            const currentJid = msg.key.remoteJid;
+            const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
+            if (!textMessage) return;
+
+            console.log(`Mensaje recibido de ${currentJid}: ${textMessage}`);
+
+            // --- GESTIÓN DE INACTIVIDAD (5 MINUTOS) ---
+            if (userTimers.has(currentJid)) {
+                clearTimeout(userTimers.get(currentJid));
+            }
+            const timerId = setTimeout(async () => {
+                try {
+                    const mensajeCierre = `Quedó anotado el pedido, estamos confirmando cosas antes de enviarlo. Gracias por comprar con Santa Estela 🥚✨`;
+                    await sock.sendMessage(currentJid, { text: mensajeCierre });
+                    console.log(`[Cierre Automático por Inactividad] Mensaje enviado a ${currentJid}`);
+                    userTimers.delete(currentJid);
+                } catch (errCierre) {
+                    console.error("[Error Cierre Automático]:", errCierre.message);
+                }
+            }, 5 * 60 * 1000);
+            userTimers.set(currentJid, timerId);
+
+            // Consultar datos actualizados de Google Sheets (Inventario, Clientes y Despachos)
+            const datosSheet = await obtenerDatosSheets();
+            const catalogo = datosSheet.stock || [];
+            const infoClientes = datosSheet.clientes || {};
+            const lugaresDespacho = datosSheet.despachos || [];
+
+            const telefonoLimpio = currentJid.split('@')[0];
             
-            const keyCliente = currentJid.split('@')[0];
-            const esLid = currentJid.includes('@lid');
-            
-            const clienteRegistrado = datosSheets.clientes?.[keyCliente] || datosSheets.clientes?.[currentJid] || null;
-            const telefonoOficial = clienteRegistrado?.telefono || (!esLid ? keyCliente : null);
+            // BÚSQUEDA INTELIGENTE: Identificar al cliente por Teléfono o por Código Corto (ej: "045")
+            let clienteConocido = infoClientes[telefonoLimpio] || null;
+            const textoLimpio = textMessage.trim();
 
-            const pedidosCliente = (datosSheets.pedidos || []).filter(p => 
-                p.cliente === currentJid || p.cliente.includes(keyCliente) || (clienteRegistrado && p.cliente.includes(clienteRegistrado.nombre))
-            );
-
-            const inventarioTexto = (datosSheets.stock && datosSheets.stock.length > 0) ? JSON.stringify(datosSheets.stock) : "No disponible";
-            const configTexto = JSON.stringify(datosSheets.config || {});
-            const vendedoresTexto = JSON.stringify(datosSheets.vendedores || []);
-            const faqTexto = JSON.stringify(datosSheets.faq || []);
-            const pedidosClienteTexto = JSON.stringify(pedidosCliente);
-
-            const historial = obtenerHistorial(currentJid);
-            const contextoHistorial = historial
-                .map(m => `${m.role === 'user' ? 'Cliente' : 'Asistente'}: ${m.text}`)
-                .join('\n');
-
-            const prompt = `Eres la asistente virtual oficial del "Gallinero Huevos Santa Estela". Atiendes con amabilidad, rapidez y calidez en español chileno.
-
-BASE DE DATOS DINÁMICA (DESDE GOOGLE SHEETS):
-- INVENTARIO Y PRODUCTOS: 
-${inventarioTexto}
-- HISTORIAL DE PEDIDOS DE ESTE CLIENTE: 
-${pedidosClienteTexto}
-- CONFIGURACIÓN Y REDES: 
-${configTexto}
-- CONTACTO VENDEDORES / DISTRIBUIDORES: 
-${vendedoresTexto}
-- PREGUNTAS FRECUENTES (FAQ): 
-${faqTexto}
-
-DATOS DEL CLIENTE EN LA TABLA CLIENTES / WHATSAPP:
-- JID Actual: 
-${currentJid}
-- Teléfono Registrado: 
-${telefonoOficial ? telefonoOficial : 'NO REGISTRADO (Requiere pedir número)'}
-- Nombre Registrado: 
-${clienteRegistrado ? clienteRegistrado.nombre : 'No registrado aún'}
-- Dirección Registrada: 
-${clienteRegistrado ? clienteRegistrado.direccion : 'No registrada aún'}
-
-REGLAS DE ATENCIÓN HÍBRIDA:
-1. Si el cliente saluda o pregunta en general, atiéndelo amablemente e incluye al final una guía opcional:
-   "Si deseas comprar o revisar tu despacho, dime qué necesitas. También puedes escribirme: 'Estado Despacho', 'Redes', 'Distribuidor', 'Reclamo' o 'Receta'."
-2. CONSULTA DE ESTADO DE DESPACHO / PEDIDO:
-   - Si pregunta por su despacho o estado de compra, revisa HISTORIAL DE PEDIDOS y diles el ID, dirección y estado actual.
-3. VENTA DIRECTA:
-   - Muestra el catálogo ordenado con precio y stock.
-   - SI YA TENEMOS SU NOMBRE Y DIRECCIÓN (Cliente Registrado), **NO vuelvas a pedirlos**. Saluda por su nombre y confirma si enviamos a su dirección registrada.
-   - SI NO ESTÁ REGISTRADO y el "Teléfono Registrado" aparece como NO REGISTRADO, pídele amablemente su Nombre, Dirección y Teléfono de contacto (+56 9...).
-4. CONFIRMACIÓN DE PEDIDO: Cuando confirme la compra, incluye la etiqueta técnica al final con el teléfono disponible:
-
-[REGISTRAR_PEDIDO:{"idProducto":"PROD-XXX","cantidad":X,"total":X,"metodoPago":"Mercado Pago o Contra Entrega","nombreCliente":"${clienteRegistrado ? clienteRegistrado.nombre : 'Cliente'}","telefonoContacto":"${telefonoOficial || keyCliente}","direccion":"${clienteRegistrado ? clienteRegistrado.direccion : 'Dirección ingresada'}","descripcion":"Huevos Santa Estela"}]
-
-Historial de esta conversación:
-${contextoHistorial}
-
-Responde de forma amable y breve (máximo 3 frases) representando a Huevos Santa Estela. **IMPORTANTE: Si incluyes la etiqueta [REGISTRAR_PEDIDO:...], NO escribas enlaces de pago en tu texto, el sistema los agregará automáticamente**: "${textoCliente}"`;
-
-            let respuestaIA = await generarConReintentos(prompt);
-            let linkPagoGenerado = "";
-
-            if (respuestaIA.includes('[REGISTRAR_PEDIDO:')) {
-                const match = respuestaIA.match(/\[REGISTRAR_PEDIDO:(.*?)\]/);
-                if (match && match[1]) {
-                    try {
-                        const datosPedido = JSON.parse(match[1]);
-                        const idPedido = 'PED-' + Date.now().toString().slice(-4);
-
-                        if (datosPedido.metodoPago.toLowerCase().includes('mercado')) {
-                            linkPagoGenerado = await generarLinkMercadoPago(
-                                idPedido,
-                                datosPedido.total,
-                                `${datosPedido.descripcion || 'Huevos Santa Estela'} (${datosPedido.idProducto})`
-                            );
-                            respuestaIA += `\n\n💳 *Enlace de Pago Mercado Pago ($${datosPedido.total} CLP):*\n${linkPagoGenerado}`;
-                        }
-
-                        await registrarPedidoSheets(
-                            idPedido,
-                            datosPedido.idProducto,
-                            datosPedido.cantidad,
-                            currentJid,
-                            datosPedido.total,
-                            datosPedido.metodoPago,
-                            datosPedido.direccion,
-                            datosPedido.nombreCliente,
-                            datosPedido.telefonoContacto || telefonoOficial || keyCliente,
-                            linkPagoGenerado
-                        );
-                    } catch (errJson) {
-                        console.error("Error al procesar JSON de pedido:", errJson.message);
+            if (!clienteConocido && /^\d{1,4}$/.test(textoLimpio)) {
+                // Buscar si el mensaje corresponde a un código de cliente en la base
+                const codigoBuscado = textoLimpio;
+                for (let tel in infoClientes) {
+                    if (infoClientes[tel].codigo === codigoBuscado || infoClientes[tel].id === codigoBuscado) {
+                        clienteConocido = infoClientes[tel];
+                        break;
                     }
                 }
-                respuestaIA = respuestaIA.replace(/\[REGISTRAR_PEDIDO:.*?\]/g, '').trim();
             }
 
-            guardarMensaje(currentJid, 'assistant', respuestaIA);
+            let promptSistema = `Eres el asistente virtual experto y amable de "Huevos Santa Estela", un negocio familiar de venta de huevos frescos y subproductos en Chile.
+            
+            Catálogo actual de productos (incluyendo precios por zona - Linares, Santiago Sector 1, Santiago Sector 2):
+            ${JSON.stringify(catalogo, null, 2)}
+
+            Zonas y reglas de despacho disponibles:
+            ${JSON.stringify(lugaresDespacho, null, 2)}
+            
+            Datos del cliente detectados: ${JSON.stringify(clienteConocido || { telefono: telefonoLimpio, nuevo: true })};
+
+            Reglas de negocio clave para despachos:
+            1. Si el cliente ya está registrado y conocemos su comuna, indícale de inmediato los precios correspondientes a su zona (Linares, Santiago Sector 1 o Santiago Sector 2).
+            2. Si es cliente nuevo, pregúntale su comuna para asignarle el precio y tarifa de despacho exacta.
+            3. Si la comuna del cliente no está registrada o está fuera de cobertura habitual, utiliza por referencia los precios más altos de Santiago Sector 2, adviértele que puede tener un cobro extra por despacho y que se validará con el administrador. Al detectar esto, asegúrate de activar la validación para notificar a los vendedores.
+            
+            Tu objetivo es guiar al cliente, tomar su pedido y cuando tengas claros el producto, cantidad, método de pago ("Mercado Pago" o "Contra Entrega") y dirección/comuna de despacho, debes incluir obligatoriamente al final de tu respuesta un bloque con este formato JSON estricto:
+            [REGISTRAR_PEDIDO:{"idPedido":"PED-${Math.floor(1000 + Math.random() * 9000)}","idProducto":"<ID>","cantidad":<NUM>,"total":<NUM>,"metodoPago":"<METODO>","direccion":"<DIRECCION>","nombreCliente":"<NOMBRE>","telefonoContacto":"<TEL>"}]
+            `;
+
+            const chat = model.startChat({
+                history: [
+                    { role: "user", parts: [{ text: promptSistema }] }
+                ]
+            });
+
+            const result = await chat.sendMessage(textMessage);
+            const respuestaIA = result.response.text();
+
+            // Detectar si la IA generó el tag de registro de pedido
+            const matchPedido = respuestaIA.match(/\[REGISTRAR_PEDIDO:(.*?)\]/);
+            if (matchPedido) {
+                try {
+                    const jsonString = matchPedido[1];
+                    const datosPedido = JSON.parse(jsonString);
+
+                    // Verificar si la dirección/comuna requiere alerta a los vendedores
+                    // (si la comuna ingresada no es de la lista regular)
+                    const direccionLower = datosPedido.direccion.toLowerCase();
+                    const esFueraDeZona = !lugaresDespacho.some(d => direccionLower.includes(d.comuna?.toLowerCase()));
+
+                    if (esFueraDeZona) {
+                        await notificarVendedores(sock, {
+                            nombre: datosPedido.nombreCliente,
+                            telefono: datosPedido.telefonoContacto || telefonoLimpio
+                        }, datosPedido.direccion);
+                    }
+
+                    let linkPagoGenerado = "";
+                    let idPagoMPGenerado = "EFECTIVO/CONTRA_ENTREGA";
+                    if (datosPedido.metodoPago.toLowerCase().includes('mercado')) {
+                        const datosMp = await generarLinkMercadoPago(
+                            datosPedido.idPedido,
+                            datosPedido.total,
+                            `Huevos Santa Estela (${datosPedido.idProducto})`
+                        );
+                        linkPagoGenerado = datosMp.initPoint;
+                        idPagoMPGenerado = datosMp.preferenceId;
+                    }
+
+                    await registrarPedidoSheets(
+                        datosPedido.idPedido,
+                        datosPedido.idProducto,
+                        datosPedido.cantidad,
+                        currentJid,
+                        datosPedido.total,
+                        datosPedido.metodoPago,
+                        datosPedido.direccion,
+                        datosPedido.nombreCliente,
+                        datosPedido.telefonoContacto,
+                        linkPagoGenerado,
+                        idPagoMPGenerado
+                    );
+
+                    let respuestaLimpia = respuestaIA.replace(/\[REGISTRAR_PEDIDO:.*?\]/, '');
+                    if (linkPagoGenerado) {
+                        respuestaLimpia += `\n\n💳 *Enlace de Pago Mercado Pago ($${datosPedido.total} CLP):*\n${linkPagoGenerado}`;
+                    }
+                    if (esFueraDeZona) {
+                        respuestaLimpia += `\n\n⚠️ *Nota:* Como tu comuna está fuera de nuestra zona de ruta regular, hemos notificado a nuestros vendedores para validar el despacho y confirmar si aplica un cobro extra.`;
+                    }
+
+                    await sock.sendMessage(currentJid, { text: respuestaLimpia });
+                    console.log("Respuesta enviada con éxito a WhatsApp");
+                    return;
+                } catch (errJson) {
+                    console.error("[Error Parseando Pedido]:", errJson.message);
+                }
+            }
+
             await sock.sendMessage(currentJid, { text: respuestaIA });
-            console.log(`Respuesta enviada con éxito a ${currentJid}`);
+            console.log("Respuesta enviada con éxito a WhatsApp");
 
         } catch (error) {
-            console.error('Error al procesar con la IA:', error.message);
+            console.error("Error procesando mensaje:", error);
         }
     });
 }
 
-iniciarBot();
+// Servidor HTTP simple de soporte
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot Huevos Santa Estela activo y operando.\n');
+});
+
+server.listen(3000, () => {
+    console.log('Servidor HTTP escuchando en el puerto 3000');
+    startBot();
+});
