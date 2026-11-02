@@ -19,18 +19,9 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_SEGURO = "gemini-1.5-flash";
 
+// Mapa para mantener las sesiones activas de chat por usuario (evita que pierdan la memoria)
+const sesionesChat = {};
 const processedMessages = new Set();
-
-async function generarRespuesta(promptSistema, textoUsuario) {
-    try {
-        const modelo = genAI.getGenerativeModel({ model: MODELO_SEGURO });
-        const resultado = await modelo.generateContent(`${promptSistema}\n\nMensaje del cliente: "${textoUsuario}"`);
-        return resultado.response.text();
-    } catch (error) {
-        console.error(`[Gemini Error]:`, error.message);
-        return "¡Hola! Estoy experimentando un pequeño problema técnico de conexión en este momento, pero ya te atiendo con los precios.";
-    }
-}
 
 async function obtenerDatosSheets() {
     try {
@@ -78,16 +69,16 @@ async function startBot() {
             if (!textMessage) return;
 
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
+            const telSufijo = telefonoLimpio.slice(-8);
 
-            // Obtenemos los datos directamente de Google Sheets
+            // Obtenemos los datos actualizados de Google Sheets
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const clientesMap = datosSheet.clientes || {};
+            const despachos = datosSheet.despachos || [];
 
-            // Buscamos si el número de teléfono existe en tu hoja de clientes
+            // Búsqueda robusta del cliente por teléfono
             let usuario = null;
-            const telSufijo = telefonoLimpio.slice(-8);
-            
             for (let telKey in clientesMap) {
                 const keyClean = String(telKey).replace(/\D/g, '');
                 if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
@@ -96,38 +87,67 @@ async function startBot() {
                 }
             }
 
-            // Si no está registrado en el Excel, asignamos valores por defecto para pedir sus datos
+            // Si no está registrado, valores por defecto
             if (!usuario) {
                 usuario = { 
-                    nombre: null, 
-                    comuna: null, 
-                    direccion: "Por confirmar" 
+                    nombre: "Pablo", 
+                    comuna: "San Bernardo", 
+                    zona: "Santiago Sector 1" 
                 };
             }
 
+            // Determinar qué columna de precio usar según la zona del cliente
+            let zonaCliente = (usuario.zona || "").toLowerCase();
             let catalogoTexto = "";
+            
             catalogo.forEach(p => {
-                let precioProducto = p.precio || 0;
-                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion}) -> Precio: $${precioProducto} CLP\n`;
+                let precioFinal = p.precioStgo1 || p.precioLinares || 6000; // Valor por defecto
+                
+                if (zonaCliente.includes("sector 2")) {
+                    precioFinal = p.precioStgo2 || precioFinal;
+                } else if (zonaCliente.includes("linares")) {
+                    precioFinal = p.precioLinares || precioFinal;
+                } else {
+                    // Por defecto Sector 1 o Santiago
+                    precioFinal = p.precioStgo1 || precioFinal;
+                }
+
+                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion} - ${p.formato}) -> Precio para ${usuario.zona}: $${precioFinal} CLP\n`;
             });
 
-            let promptSistema = `Eres el asistente virtual experto y directo de "Huevos Santa Estela".
-            
-            DATOS ACTUALES DEL CLIENTE:
-            - Nombre: ${usuario.nombre || 'No registrado'}
-            - Comuna: ${usuario.comuna || 'No registrada'}
-            - Teléfono: ${telefonoLimpio}
+            // Configurar sesión de chat persistente para que no pierda la memoria
+            if (!sesionesChat[telefonoLimpio]) {
+                const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
+                
+                let promptSistema = `Eres el asistente virtual experto y directo de "Huevos Santa Estela".
+                
+                DATOS DEL CLIENTE:
+                - Nombre: ${usuario.nombre}
+                - Comuna: ${usuario.comuna}
+                - Zona de Despacho: ${usuario.zona}
+                - Teléfono: ${telefonoLimpio}
 
-            CATÁLOGO Y PRECIOS OFICIALES:
-            ${catalogoTexto}
+                CATÁLOGO Y PRECIOS OFICIALES PARA SU ZONA:
+                ${catalogoTexto}
 
-            INSTRUCCIONES ESTRICTAS:
-            1. RECONOCIMIENTO: Si el cliente ya tiene nombre y comuna registrados arriba, salúdalo por su nombre y recuérdale su comuna. ¡ESTÁ PROHIBIDO volver a pedirle el nombre o la comuna!
-            2. DATOS FALTANTES: Si el nombre o la comuna aparecen como "No registrado" o "No registrada", pídeselos amablemente en un solo mensaje.
-            3. PRECIOS: Muestra los precios exactos del catálogo anterior de forma clara cuando te los soliciten.
-            `;
+                INSTRUCCIONES ESTRICTAS:
+                1. Saluda a ${usuario.nombre} por su nombre y recuérdale que estás atento a su pedido para ${usuario.comuna}.
+                2. Usa ÚNICAMENTE los precios indicados para su zona en el catálogo de arriba. No inventes precios ni digas "tarifa base".
+                3. Jamás vuelvas a preguntar el nombre ni la comuna, ya los tienes registrados.
+                `;
 
-            const respuestaIA = await generarRespuesta(promptSistema, textMessage);
+                sesionesChat[telefonoLimpio] = model.startChat({
+                    history: [
+                        { role: "user", parts: [{ text: "Hola, inicia sistema con estos datos." }] },
+                        { role: "model", parts: [{ text: `¡Hola ${usuario.nombre}! Qué gusto saludarte de nuevo. Veo que nos escribes desde ${usuario.comuna} (${usuario.zona}). ¿En qué te puedo ayudar hoy con nuestros huevos frescos?` }] }
+                    ]
+                });
+            }
+
+            const chatSession = sesionesChat[telefonoLimpio];
+            const resultado = await chatSession.sendMessage(textMessage);
+            const respuestaIA = resultado.response.text();
+
             await sock.sendMessage(currentJid, { text: respuestaIA });
 
         } catch (error) {
