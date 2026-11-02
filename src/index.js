@@ -24,7 +24,7 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_SEGURO = "gemini-1.5-flash";
 
-// Archivo local para persistencia de estados (evita amnesia si el bot se reinicia)
+// Archivo local para persistencia de estados (evita amnesia de forma absoluta)
 const ESTADOS_FILE = './clientes_estado.json';
 let memoriaClientes = {};
 
@@ -108,26 +108,28 @@ async function startBot() {
             if (!textMessage) return;
 
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
-            const telSufijo = telefonoLimpio.slice(-8); // Últimos 8 dígitos para comparar flexible
+            const telSufijo = telefonoLimpio.slice(-8);
 
-            // Cargar datos desde Google Sheets
+            // Cargar datos actuales (Catálogo y Despachos) desde Google Sheets
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const clientesMap = datosSheet.clientes || {};
             const despachos = datosSheet.despachos || [];
 
-            // Buscar si el cliente existe en el Sheet con coincidencia amplia
-            let clienteSheet = null;
-            for (let telKey in clientesMap) {
-                const keyClean = String(telKey).replace(/\D/g, '');
-                if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
-                    clienteSheet = clientesMap[telKey];
-                    break;
-                }
-            }
+            // 1. PRIORIDAD ABSOLUTA: Recuperar de la memoria local para que NUNCA pierda el estado
+            let est = memoriaClientes[telefonoLimpio];
 
-            // Inicializar o recuperar estado del cliente
-            if (!memoriaClientes[telefonoLimpio]) {
+            if (!est) {
+                // Si no está en memoria local, buscamos en el Google Sheets por si acaso
+                let clienteSheet = null;
+                for (let telKey in clientesMap) {
+                    const keyClean = String(telKey).replace(/\D/g, '');
+                    if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
+                        clienteSheet = clientesMap[telKey];
+                        break;
+                    }
+                }
+
                 memoriaClientes[telefonoLimpio] = {
                     nombre: clienteSheet ? clienteSheet.nombre : null,
                     comuna: clienteSheet ? clienteSheet.comuna : null,
@@ -135,20 +137,11 @@ async function startBot() {
                     zona: "Santiago Sector 1",
                     paso: clienteSheet ? "LISTO_PARA_PEDIR" : "ESPERANDO_DATOS"
                 };
-                guardarMemoria();
-            }
-            let est = memoriaClientes[telefonoLimpio];
-
-            // Si está en el Excel pero su paso no era listo, forzamos a listo
-            if (clienteSheet && est.paso !== "LISTO_PARA_PEDIR") {
-                est.nombre = clienteSheet.nombre;
-                est.comuna = clienteSheet.comuna;
-                est.direccion = clienteSheet.direccion;
-                est.paso = "LISTO_PARA_PEDIR";
+                est = memoriaClientes[telefonoLimpio];
                 guardarMemoria();
             }
 
-            // Máquina de estados para capturar datos si es nuevo
+            // 2. MÁQUINA DE ESTADOS BLINDADA
             if (est.paso === "ESPERANDO_DATOS") {
                 const modelExtraccion = genAI.getGenerativeModel({ model: MODELO_SEGURO });
                 const promptExtraccion = `Analiza el mensaje de este cliente: "${textMessage}"
@@ -167,6 +160,7 @@ async function startBot() {
                 }
 
                 if (!est.nombre) {
+                    guardarMemoria();
                     await sock.sendMessage(currentJid, { text: `¡Hola! Qué gusto saludarte en *Huevos Santa Estela* 🥚. ¿Podrías indicarme tu *nombre* por favor?` });
                     return;
                 }
@@ -174,7 +168,7 @@ async function startBot() {
                 if (!est.comuna) {
                     est.paso = "ESPERANDO_COMUNA";
                     guardarMemoria();
-                    await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué *comuna* nos escribes para indicarte los precios?` });
+                    await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué *comuna* nos escribes para indicarte los precios y tarifas exactas?` });
                     return;
                 }
 
@@ -188,7 +182,7 @@ async function startBot() {
                 guardarMemoria();
             }
 
-            // Asignar zona de despacho según la comuna
+            // Asignar zona de despacho de manera segura
             if (est.comuna) {
                 let zonaEncontrada = "Santiago Sector 1";
                 for (let d of despachos) {
@@ -198,9 +192,10 @@ async function startBot() {
                     }
                 }
                 est.zona = zonaEncontrada;
+                guardarMemoria();
             }
 
-            // --- BLOQUE DE ATENCIÓN Y COMPRA ---
+            // --- BLOQUE DE ATENCIÓN Y COMPRA (LISTO_PARA_PEDIR) ---
             let zonaCliente = (est.zona || "").toLowerCase();
             let catalogoTexto = "";
             let productosMap = {};
@@ -219,7 +214,7 @@ async function startBot() {
             });
 
             const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
-            let promptSistema = `Eres el asistente virtual experto y amable de "Huevos Santa Estela".
+            let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
             
             DATOS OFICIALES DEL CLIENTE (ESTRICTAMENTE PROHIBIDO VOLVER A PEDIR NOMBRE O COMUNA):
             - Nombre: ${est.nombre}
@@ -236,7 +231,7 @@ async function startBot() {
             `;
 
             let promptMensaje = textMessage;
-            if (clienteSheet && textMessage.toLowerCase() === "hola") {
+            if (est.paso === "LISTO_PARA_PEDIR" && textMessage.toLowerCase() === "hola") {
                 promptMensaje = "Hola, vengo a hacer un pedido.";
             }
 
@@ -297,9 +292,11 @@ async function startBot() {
 
             await sock.sendMessage(currentJid, { text: respuestaIA });
 
-        } catch (error) {
-            console.error("Error crítico procesando mensaje:", error);
+        } cmdCatch: {
+            // error block
         }
+    } catch (error) {
+        console.error("Error crítico procesando mensaje:", error);
     });
 }
 
