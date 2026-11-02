@@ -17,10 +17,9 @@ if (MP_ACCESS_TOKEN) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// Usamos el modelo flash estándar más compatible
 const MODELO_SEGURO = "gemini-1.5-flash";
 
-const memoriaUsuarios = {};
+const processedMessages = new Set();
 
 async function generarRespuesta(promptSistema, textoUsuario) {
     try {
@@ -32,8 +31,6 @@ async function generarRespuesta(promptSistema, textoUsuario) {
         return "¡Hola! Estoy experimentando un pequeño problema técnico de conexión en este momento, pero ya te atiendo con los precios.";
     }
 }
-
-const processedMessages = new Set();
 
 async function obtenerDatosSheets() {
     try {
@@ -82,35 +79,52 @@ async function startBot() {
 
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
 
-            if (!memoriaUsuarios[telefonoLimpio]) {
-                memoriaUsuarios[telefonoLimpio] = { nombre: "Pablo Macaya", comuna: "San Bernardo", zona: "Santiago Sector 1" };
-            }
-            const usuario = memoriaUsuarios[telefonoLimpio];
-
+            // Obtenemos los datos directamente de Google Sheets
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
-            const lugaresDespacho = datosSheet.despachos || [];
+            const clientesMap = datosSheet.clientes || {};
+
+            // Buscamos si el número de teléfono existe en tu hoja de clientes
+            let usuario = null;
+            const telSufijo = telefonoLimpio.slice(-8);
+            
+            for (let telKey in clientesMap) {
+                const keyClean = String(telKey).replace(/\D/g, '');
+                if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
+                    usuario = clientesMap[telKey];
+                    break;
+                }
+            }
+
+            // Si no está registrado en el Excel, asignamos valores por defecto para pedir sus datos
+            if (!usuario) {
+                usuario = { 
+                    nombre: null, 
+                    comuna: null, 
+                    direccion: "Por confirmar" 
+                };
+            }
 
             let catalogoTexto = "";
             catalogo.forEach(p => {
-                let precioZona = p.precioStgo1 || p.precio || 6000;
-                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion}) -> Precio oficial: $${precioZona} CLP\n`;
+                let precioProducto = p.precio || 0;
+                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion}) -> Precio: $${precioProducto} CLP\n`;
             });
 
             let promptSistema = `Eres el asistente virtual experto y directo de "Huevos Santa Estela".
             
-            DATOS DEL CLIENTE:
-            - Nombre: ${usuario.nombre}
-            - Comuna: ${usuario.comuna}
-            - Zona: ${usuario.zona}
+            DATOS ACTUALES DEL CLIENTE:
+            - Nombre: ${usuario.nombre || 'No registrado'}
+            - Comuna: ${usuario.comuna || 'No registrada'}
+            - Teléfono: ${telefonoLimpio}
 
             CATÁLOGO Y PRECIOS OFICIALES:
             ${catalogoTexto}
 
-            INSTRUCCIONES:
-            1. Saluda a ${usuario.nombre} por su nombre y recuérdale que estás atento a su pedido para ${usuario.comuna}.
-            2. Muestra los precios exactos del catálogo anterior de forma clara y directa.
-            3. NUNCA pidas el nombre ni la comuna, ya los tenemos registrados arriba.
+            INSTRUCCIONES ESTRICTAS:
+            1. RECONOCIMIENTO: Si el cliente ya tiene nombre y comuna registrados arriba, salúdalo por su nombre y recuérdale su comuna. ¡ESTÁ PROHIBIDO volver a pedirle el nombre o la comuna!
+            2. DATOS FALTANTES: Si el nombre o la comuna aparecen como "No registrado" o "No registrada", pídeselos amablemente en un solo mensaje.
+            3. PRECIOS: Muestra los precios exactos del catálogo anterior de forma clara cuando te los soliciten.
             `;
 
             const respuestaIA = await generarRespuesta(promptSistema, textMessage);
