@@ -12,14 +12,17 @@ const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 
 let mpClient = null;
 if (MP_ACCESS_TOKEN) {
-    mpClient = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
-    console.log("[Mercado Pago] SDK inicializado correctamente.");
+    try {
+        mpClient = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
+        console.log("[Mercado Pago] SDK inicializado correctamente.");
+    } catch (e) {
+        console.error("[Mercado Pago Error]:", e.message);
+    }
 }
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_SEGURO = "gemini-1.5-flash";
 
-// Mapa para mantener las sesiones activas de chat por usuario (evita que pierdan la memoria)
 const sesionesChat = {};
 const processedMessages = new Set();
 
@@ -27,6 +30,7 @@ async function obtenerDatosSheets() {
     try {
         if (!URL_APPS_SCRIPT) return { stock: [], clientes: {}, despachos: [] };
         const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const text = await res.text();
         const data = JSON.parse(text);
         const listaZonas = data.despachos || data.zonas || [];
@@ -71,13 +75,11 @@ async function startBot() {
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
             const telSufijo = telefonoLimpio.slice(-8);
 
-            // Obtenemos los datos actualizados de Google Sheets
+            // Obtener datos de Google Sheets de forma segura
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const clientesMap = datosSheet.clientes || {};
-            const despachos = datosSheet.despachos || [];
 
-            // Búsqueda robusta del cliente por teléfono
             let usuario = null;
             for (let telKey in clientesMap) {
                 const keyClean = String(telKey).replace(/\D/g, '');
@@ -87,43 +89,42 @@ async function startBot() {
                 }
             }
 
-            // Si no está registrado, valores por defecto
-            if (!usuario) {
+            // Si es un cliente nuevo o no está en la hoja, se activan campos nulos para pedírselos
+            const esNuevo = !usuario;
+            if (esNuevo) {
                 usuario = { 
-                    nombre: "Pablo", 
-                    comuna: "San Bernardo", 
+                    nombre: null, 
+                    comuna: null, 
                     zona: "Santiago Sector 1" 
                 };
             }
 
-            // Determinar qué columna de precio usar según la zona del cliente
+            // Mapeo seguro de precios por zona
             let zonaCliente = (usuario.zona || "").toLowerCase();
             let catalogoTexto = "";
             
             catalogo.forEach(p => {
-                let precioFinal = p.precioStgo1 || p.precioLinares || 6000; // Valor por defecto
-                
+                let precioFinal = p.precioStgo1 || p.precioLinares || 6000;
                 if (zonaCliente.includes("sector 2")) {
                     precioFinal = p.precioStgo2 || precioFinal;
                 } else if (zonaCliente.includes("linares")) {
                     precioFinal = p.precioLinares || precioFinal;
                 } else {
-                    // Por defecto Sector 1 o Santiago
                     precioFinal = p.precioStgo1 || precioFinal;
                 }
 
-                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion} - ${p.formato}) -> Precio para ${usuario.zona}: $${precioFinal} CLP\n`;
+                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion} - ${p.formato}) -> Precio: $${precioFinal} CLP\n`;
             });
 
-            // Configurar sesión de chat persistente para que no pierda la memoria
+            // Gestión robusta de sesión de chat con memoria persistente
             if (!sesionesChat[telefonoLimpio]) {
                 const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
                 
-                let promptSistema = `Eres el asistente virtual experto y directo de "Huevos Santa Estela".
+                let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
                 
                 DATOS DEL CLIENTE:
-                - Nombre: ${usuario.nombre}
-                - Comuna: ${usuario.comuna}
+                - Nombre: ${usuario.nombre || 'No registrado'}
+                - Comuna: ${usuario.comuna || 'No registrada'}
                 - Zona de Despacho: ${usuario.zona}
                 - Teléfono: ${telefonoLimpio}
 
@@ -131,15 +132,15 @@ async function startBot() {
                 ${catalogoTexto}
 
                 INSTRUCCIONES ESTRICTAS:
-                1. Saluda a ${usuario.nombre} por su nombre y recuérdale que estás atento a su pedido para ${usuario.comuna}.
-                2. Usa ÚNICAMENTE los precios indicados para su zona en el catálogo de arriba. No inventes precios ni digas "tarifa base".
-                3. Jamás vuelvas a preguntar el nombre ni la comuna, ya los tienes registrados.
+                1. RECONOCIMIENTO: Si el cliente ya tiene nombre y comuna registrados, salúdalo por su nombre y recuérdale su comuna. ¡ESTÁ PROHIBIDO volver a pedirle el nombre o la comuna!
+                2. CLIENTES NUEVOS: Si el nombre o la comuna son nulos o no están registrados, salúdalo amablemente y pídele amablemente su nombre y comuna en un solo mensaje para registrarlo.
+                3. PRECIOS: Usa los precios exactos indicados en el catálogo para su zona.
                 `;
 
                 sesionesChat[telefonoLimpio] = model.startChat({
                     history: [
-                        { role: "user", parts: [{ text: "Hola, inicia sistema con estos datos." }] },
-                        { role: "model", parts: [{ text: `¡Hola ${usuario.nombre}! Qué gusto saludarte de nuevo. Veo que nos escribes desde ${usuario.comuna} (${usuario.zona}). ¿En qué te puedo ayudar hoy con nuestros huevos frescos?` }] }
+                        { role: "user", parts: [{ text: "Iniciar sistema de ventas." }] },
+                        { role: "model", parts: [{ text: `Entendido. Asistiendo a ${usuario.nombre || 'cliente nuevo'}. Mantendré la memoria activa.` }] }
                     ]
                 });
             }
@@ -151,7 +152,12 @@ async function startBot() {
             await sock.sendMessage(currentJid, { text: respuestaIA });
 
         } catch (error) {
-            console.error("Error procesando mensaje:", error);
+            console.error("Error crítico procesando mensaje:", error);
+            try {
+                await sock.sendMessage(msg.key.remoteJid, { text: "¡Hola! Estoy experimentando un pequeño inconveniente técnico momentáneo, pero ya vuelvo a estar contigo." });
+            } catch (innerErr) {
+                console.error("No se pudo enviar mensaje de error al usuario:", innerErr);
+            }
         }
     });
 }
