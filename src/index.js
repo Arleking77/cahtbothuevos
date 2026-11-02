@@ -17,14 +17,15 @@ if (MP_ACCESS_TOKEN) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// Modelo estable de alta disponibilidad para evitar errores de saturación
 const MODELO_ESTABLE = "gemini-3.5-flash-lite";
 
-async function generarRespuestaIA(promptSistema, textoUsuario) {
+// Memoria temporal robusta para mantener el contexto de la conversación por usuario
+const sesionesUsuarios = {};
+
+async function generarRespuestaIA(historialChat, textoUsuario) {
     try {
         const modelo = genAI.getGenerativeModel({ model: MODELO_ESTABLE });
-        const chat = modelo.startChat({ history: [{ role: "user", parts: [{ text: promptSistema }] }] });
+        const chat = modelo.startChat({ history: historialChat });
         const result = await chat.sendMessage(textoUsuario);
         return result.response.text();
     } catch (error) {
@@ -93,8 +94,6 @@ async function obtenerDatosSheets() {
         const res = await fetch(URL_APPS_SCRIPT, { redirect: 'follow' });
         const text = await res.text();
         const data = JSON.parse(text);
-        
-        // Mapeo seguro contemplando 'despachos' o 'zonas' devueltos por el Apps Script
         const listaZonas = data.despachos || data.zonas || [];
         
         console.log(`[Sheets Debug] Catálogo: ${data.stock?.length || 0} productos, Clientes: ${Object.keys(data.clientes || {}).length}, Zonas: ${listaZonas.length}`);
@@ -135,6 +134,45 @@ async function notificarVendedores(sock, clienteInfo, comunaIngresada, listaVend
     }
 }
 
+function determinarZonaYPrecios(comunaCliente, lugaresDespacho, catalogoProductos) {
+    if (!comunaCliente) return { zona: "Santiago Sector 1", tarifa: "Tarifa Base", listaPrecios: [] };
+    
+    const comunaNorm = comunaCliente.toLowerCase().trim();
+    let zonaEncontrada = "Santiago Sector 1";
+    let tarifaEncontrada = "Tarifa Base";
+
+    for (let d of lugaresDespacho) {
+        if (d.comuna && comunaNorm.includes(d.comuna.toLowerCase())) {
+            zonaEncontrada = d.zona || "Santiago Sector 1";
+            tarifaEncontrada = d.tarifa || "Tarifa Base";
+            break;
+        }
+    }
+
+    // Mapeamos los precios exactos según la zona detectada
+    const listaPrecios = catalogoProductos.map(prod => {
+        let precioFinal = prod.precio; // fallback
+        const descLower = (prod.descripcion || prod.categoria || '').toLowerCase();
+        
+        // Asignación estricta según columnas de tu Excel de productos
+        if (zonaEncontrada.toLowerCase().includes('linares')) {
+            precioFinal = prod.precioLinares || prod.precio; 
+        } else if (zonaEncontrada.toLowerCase().includes('sector 2')) {
+            precioFinal = prod.precioStgo2 || prod.precio + 500;
+        } else {
+            precioFinal = prod.precioStgo1 || prod.precio;
+        }
+
+        return {
+            id: prod.id,
+            producto: `${prod.categoria} - ${prod.descripcion}`,
+            precio: prod.precio // Estructura general
+        };
+    });
+
+    return { zona: zonaEncontrada, tarifa: tarifaEncontrada };
+}
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const sock = makeWASocket({ auth: state, printQRInTerminal: true });
@@ -164,6 +202,17 @@ async function startBot() {
             const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
             if (!textMessage) return;
 
+            // Inicializar sesión persistente en memoria para el usuario si no existe
+            if (!sesionesUsuarios[currentJid]) {
+                sesionesUsuarios[currentJid] = {
+                    nombre: null,
+                    comuna: null,
+                    zona: null,
+                    historial: []
+                };
+            }
+            const sesion = sesionesUsuarios[currentJid];
+
             // Obtener datos frescos del Excel
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
@@ -174,44 +223,106 @@ async function startBot() {
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
             let clienteConocido = null;
 
-            // Reconocimiento robusto del cliente
+            // Búsqueda robusta por sufijo de 8 u 9 dígitos (evita fallos de formato con prefijos de WA)
+            const telSufijo = telefonoLimpio.slice(-8);
             for (let telKey in infoClientes) {
                 const keyClean = String(telKey).replace(/\D/g, '');
-                if (keyClean === telefonoLimpio || telefonoLimpio.endsWith(keyClean) || keyClean.endsWith(telefonoLimpio)) {
+                if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
                     clienteConocido = infoClientes[telKey];
                     break;
                 }
             }
 
+            // Si se encontró en Excel, sincronizamos la sesión
+            if (clienteConocido) {
+                if (!sesion.nombre) sesion.nombre = clienteConocido.nombre;
+                if (!sesion.comuna) sesion.comuna = clienteConocido.comuna;
+            }
+
+            // Intentar detectar comuna o nombre si el usuario lo escribe en el texto y no lo teníamos
             const textoLimpio = textMessage.trim();
-            if (!clienteConocido && /^\d{1,4}$/.test(textoLimpio)) {
-                for (let tel in infoClientes) {
-                    if (infoClientes[tel].codigo === textoLimpio || infoClientes[tel].id === textoLimpio) {
-                        clienteConocido = infoClientes[tel];
+            if (!sesion.comuna) {
+                for (let d of lugaresDespacho) {
+                    if (d.comuna && textoLimpio.toLowerCase().includes(d.comuna.toLowerCase())) {
+                        sesion.comuna = d.comuna;
+                        sesion.zona = d.zona;
+                        break;
+                    }
+                }
+            }
+            if (!sesion.nombre && !/^\d+$/.test(textoLimpio) && textoLimpio.length > 2 && !textoLimpio.toLowerCase().includes('hola')) {
+                // Si el mensaje parece un nombre o viene con coma (ej: "Pablo, San Bernardo")
+                const partes = textoLimpio.split(',');
+                if (partes.length > 1) {
+                    sesion.nombre = partes[0].trim();
+                    const posibleComuna = partes[1].trim();
+                    for (let d of lugaresDespacho) {
+                        if (d.comuna && posibleComuna.toLowerCase().includes(d.comuna.toLowerCase())) {
+                            sesion.comuna = d.comuna;
+                            sesion.zona = d.zona;
+                        }
+                    }
+                } else if (!sesion.nombre) {
+                    sesion.nombre = textoLimpio;
+                }
+            }
+
+            // Determinar zona y precios específicos formateados para inyectar al prompt
+            let zonaAplicada = sesion.zona || "Santiago Sector 1";
+            if (sesion.comuna) {
+                for (let d of lugaresDespacho) {
+                    if (d.comuna && sesion.comuna.toLowerCase().includes(d.comuna.toLowerCase())) {
+                        zonaAplicada = d.zona || "Santiago Sector 1";
                         break;
                     }
                 }
             }
 
-            let promptSistema = `Eres el asistente virtual experto y amable de "Huevos Santa Estela".
-            
-            CATÁLOGO DE PRODUCTOS (Usa estrictamente Tipo de Huevo, Formato y el Valor correspondiente a la zona del cliente. ESTÁ PROHIBIDO mencionar stock o disponibilidad):
-            ${JSON.stringify(catalogo, null, 2)}
+            // Construir catálogo detallado con precios explícitos según la zona del cliente
+            let catalogoTextoPrecios = "";
+            catalogo.forEach(p => {
+                // Seleccionar tarifa según zona
+                let precioZona = p.precio;
+                if (zonaAplicada.toLowerCase().includes('linares')) {
+                    precioZona = p.precioLinares || p.precio;
+                } else if (zonaAplicada.toLowerCase().includes('sector 2')) {
+                    precioZona = p.precioStgo2 || p.precio + 500;
+                } else {
+                    precioZona = p.precioStgo1 || p.precio;
+                }
+                catalogoTextoPrecios += `- ID: ${p.id} | ${p.categoria} (${p.descripcion}) | Formato: ${p.gramaje || 'Bandeja'} | Precio para ${zonaAplicada}: $${precioZona} CLP\n`;
+            });
 
-            ZONAS Y PRECIOS:
-            ${JSON.stringify(lugaresDespacho, null, 2)}
+            let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
             
-            DATOS DEL CLIENTE DETECTADO: ${JSON.stringify(clienteConocido || { telefono: telefonoLimpio, nuevo: true })};
+            INFORMACIÓN ACTUAL DEL CLIENTE:
+            - Nombre: ${sesion.nombre || (clienteConocido ? clienteConocido.nombre : 'Desconocido')}
+            - Comuna / Ubicación: ${sesion.comuna || (clienteConocido ? clienteConocido.comuna : 'Por definir')}
+            - Zona de Despacho Asignada: ${zonaAplicada}
 
-            INSTRUCCIONES CLAVE:
-            1. RECONOCIMIENTO: Si en "DATOS DEL CLIENTE DETECTADO" aparece un nombre o dirección registrada (no dice "nuevo: true"), salúdalo por su nombre y recuérdale su ubicación. Si es nuevo, salúdalo cordialmente y pídele amablemente su nombre y comuna.
-            2. FORMATO DE PRECIOS: Muestra SOLAMENTE el Tipo de Huevo, el Formato y el Valor exacto según su zona (Linares, Santiago Sector 1 o Santiago Sector 2). NUNCA menciones la palabra stock.
-            3. ZONAS Y ALERTAS: Si es de una comuna fuera de rango (ej. San Bernardo), explícale que se aplica tarifa de referencia de Santiago Sector 2 y que se validará con el equipo.
-            4. CIERRE DE PEDIDO: Cuando tengas producto, cantidad, método de pago ("Mercado Pago" o "Contra Entrega") y dirección, agrega al final el JSON exacto:
+            LISTA DE PRECIOS OFICIALES PARA SU ZONA (${zonaAplicada}):
+            ${catalogoTextoPrecios}
+
+            INSTRUCCIONES ESTRICTAS:
+            1. RECONOCIMIENTO: Si el cliente ya tiene nombre y comuna registrados en la información actual, salúdalo por su nombre y recuérdale su comuna. NUNCA le vuelvas a preguntar el nombre ni la comuna si ya los conoces.
+            2. PRECIOS OBLIGATORIOS: Cuando el cliente pida precios, catálogo o información de productos, DEBES listar los productos con sus precios exactos en pesos chilenos ($ CLP) basados en la lista de precios oficial para su zona detallada arriba. ESTÁ PROHIBIDO omitir los precios o decir que no los tienes. PROHIBIDO mencionar stock o disponibilidad.
+            3. ZONAS FUERA DE RANGO: Si la comuna es fuera de rango (ej. San Bernardo), recuérdale que se aplica la tarifa de referencia de Santiago Sector 2 validada con el equipo.
+            4. CIERRE DE PEDIDO: Cuando tengas producto, cantidad, método de pago ("Mercado Pago" o "Contra Entrega") y dirección exacta, genera al final de tu respuesta el JSON exacto:
             [REGISTRAR_PEDIDO:{"idPedido":"PED-${Math.floor(1000 + Math.random() * 9000)}","idProducto":"<ID>","cantidad":<NUM>,"total":<NUM>,"metodoPago":"<METODO>","direccion":"<DIRECCION>","nombreCliente":"<NOMBRE>","telefonoContacto":"<TEL>"}]
             `;
 
-            const respuestaIA = await generarRespuestaIA(promptSistema, textMessage);
+            // Construir historial de chat para la IA manteniendo el system prompt como rol user/model inicial
+            if (sesion.historial.length === 0) {
+                sesion.historial.push({ role: "user", parts: [{ text: promptSistema }] });
+                sesion.historial.push({ role: "model", parts: [{ text: "Entendido. Operaré estrictamente con estos datos de cliente, precios por zona e instrucciones." }] });
+            }
+
+            const respuestaIA = await generarRespuestaIA(sesion.historial, textMessage);
+
+            // Guardar en el historial de la sesión
+            sesion.historial.push({ role: "user", parts: [{ text: textMessage }] });
+            sesion.historial.push({ role: "model", parts: [{ text: respuestaIA }] });
+            if (sesion.historial.length > 15) sesion.historial.splice(2, 2); // Mantener liviano el historial
 
             const matchPedido = respuestaIA.match(/\[REGISTRAR_PEDIDO:(.*?)\]/);
             if (matchPedido) {
