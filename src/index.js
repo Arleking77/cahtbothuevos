@@ -1,4 +1,3 @@
-JavaScript
 import { makeWASocket, useMultiFileAuthState } from '@whiskeysockets/baileys';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
@@ -24,8 +23,8 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_SEGURO = "gemini-1.5-flash";
 
-const sesionesChat = {};
-const estadoConversacion = {}; // Control de estado por pasos para evitar amnesia
+// Memoria de estado estricta por número de teléfono
+const memoriaClientes = {};
 const processedMessages = new Set();
 
 async function obtenerDatosSheets() {
@@ -54,7 +53,7 @@ async function guardarPedidoEnSheets(pedidoData) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(pedidoData)
         });
-        console.log("[Sheets] Pedido guardado exitosamente.");
+        console.log("[Sheets] Pedido guardado exitosamente en la hoja.");
     } catch (e) {
         console.error("[Sheets POST Error]:", e.message);
     }
@@ -83,50 +82,52 @@ async function startBot() {
             setTimeout(() => processedMessages.delete(messageId), 60000);
 
             const currentJid = msg.key.remoteJid;
-            const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
+            const textMessage = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
             if (!textMessage) return;
 
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
             const telSufijo = telefonoLimpio.slice(-8);
 
-            // Obtener datos de Google Sheets
+            // Cargar datos actuales desde Google Sheets
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const clientesMap = datosSheet.clientes || {};
             const despachos = datosSheet.despachos || [];
 
-            // Buscar cliente en el Sheet
-            let usuarioRegistrado = null;
+            // Verificar si el cliente ya existe en la base de datos de Excel
+            let clienteSheet = null;
             for (let telKey in clientesMap) {
                 const keyClean = String(telKey).replace(/\D/g, '');
                 if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
-                    usuarioRegistrado = clientesMap[telKey];
+                    clienteSheet = clientesMap[telKey];
                     break;
                 }
             }
 
-            // Inicializar estado temporal si no existe
-            if (!estadoConversacion[telefonoLimpio]) {
-                estadoConversacion[telefonoLimpio] = {
-                    nombre: usuarioRegistrado ? usuarioRegistrado.nombre : null,
-                    comuna: usuarioRegistrado ? usuarioRegistrado.comuna : null,
-                    direccion: usuarioRegistrado ? usuarioRegistrado.direccion : null,
+            // Inicializar o recuperar el estado conversacional del usuario
+            if (!memoriaClientes[telefonoLimpio]) {
+                memoriaClientes[telefonoLimpio] = {
+                    nombre: clienteSheet ? clienteSheet.nombre : null,
+                    comuna: clienteSheet ? clienteSheet.comuna : null,
+                    direccion: clienteSheet ? clienteSheet.direccion : null,
                     zona: "Santiago Sector 1",
-                    paso: usuarioRegistrado ? "MENU" : "PIDIENDO_NOMBRE"
+                    paso: clienteSheet ? "LISTO_PARA_PEDIR" : "ESPERANDO_NOMBRE"
                 };
             }
-            let est = estadoConversacion[telefonoLimpio];
+            let est = memoriaClientes[telefonoLimpio];
 
-            // Si el cliente responde y nos falta nombre o comuna, intentamos capturarlo del mensaje
-            if (!est.nombre || est.paso === "PIDIENDO_NOMBRE") {
-                est.nombre = textMessage.trim();
-                est.paso = "PIDIENDO_COMUNA";
-                await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué comuna nos escribes para indicarte los precios y tarifas de despacho?` });
+            // MÁQUINA DE ESTADOS POR PASOS (Evita amnesia y preguntas repetidas)
+            if (est.paso === "ESPERANDO_NOMBRE") {
+                est.nombre = textMessage;
+                est.paso = "ESPERANDO_COMUNA";
+                await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué comuna nos escribes para indicarte los precios y tarifas exactas?` });
                 return;
-            } else if (!est.comuna || est.paso === "PIDIENDO_COMUNA") {
-                est.comuna = textMessage.trim();
+            }
+
+            if (est.paso === "ESPERANDO_COMUNA") {
+                est.comuna = textMessage;
                 
-                // Buscar zona según la comuna en los despachos
+                // Buscar zona correspondiente en la lista de despachos
                 let zonaEncontrada = "Santiago Sector 1";
                 for (let d of despachos) {
                     if (d.comuna.toLowerCase() === est.comuna.toLowerCase()) {
@@ -135,13 +136,16 @@ async function startBot() {
                     }
                 }
                 est.zona = zonaEncontrada;
-                est.paso = "MENU";
+                est.paso = "LISTO_PARA_PEDIR";
+                
+                await sock.sendMessage(currentJid, { text: `¡Perfecto! Veo que eres de *${est.comuna}* (${est.zona}). ¿Qué productos o cuántas bandejas te gustaría llevar hoy?` });
+                return;
             }
 
-            // Mapear precios según la zona del cliente
+            // Si ya está registrado y en zona, armar el catálogo con precios específicos
             let zonaCliente = (est.zona || "").toLowerCase();
             let catalogoTexto = "";
-            let mapaPrecios = {};
+            let productosMap = {};
 
             catalogo.forEach(p => {
                 let precioFinal = p.precioStgo1 || p.precioLinares || 6000;
@@ -152,56 +156,49 @@ async function startBot() {
                 } else {
                     precioFinal = p.precioStgo1 || precioFinal;
                 }
-                mapaPrecios[p.id] = { descripcion: `${p.categoria} (${p.formato})`, precio: precioFinal };
+                productosMap[p.id] = { categoria: p.categoria, formato: p.formato, precio: precioFinal };
                 catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion} - ${p.formato}) -> Precio: $${precioFinal} CLP\n`;
             });
 
-            // GESTIÓN DE SESIÓN DE CHAT CON GEMINI
-            if (!sesionesChat[telefonoLimpio]) {
-                const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
-                
-                let promptSistema = `Eres el asistente virtual experto y amable de "Huevos Santa Estela".
-                
-                DATOS DEL CLIENTE:
-                - Nombre: ${est.nombre}
-                - Comuna: ${est.comuna}
-                - Zona: ${est.zona}
-                - Teléfono: ${telefonoLimpio}
+            // Procesar la solicitud con Gemini usando el contexto fijo del cliente
+            const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
+            let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
+            
+            DATOS OFICIALES DEL CLIENTE (NO LOS CAMBIES NI LOS PIDAS DE NUEVO):
+            - Nombre: ${est.nombre}
+            - Comuna: ${est.comuna}
+            - Zona de Despacho: ${est.zona}
+            - Teléfono: ${telefonoLimpio}
 
-                CATÁLOGO Y PRECIOS OFICIALES PARA SU ZONA:
-                ${catalogoTexto}
+            CATÁLOGO Y PRECIOS OFICIALES PARA SU ZONA:
+            ${catalogoTexto}
 
-                INSTRUCCIONES DE FLUJO:
-                1. Ya conoces al cliente (${est.nombre} de ${est.comuna}). NUNCA vuelvas a pedir su nombre ni su comuna.
-                2. Ayúdale a elegir sus productos, calcula los totales exactos usando los precios del catálogo de arriba.
-                3. Cuando el cliente confirme qué producto y cantidad quiere, pídele su dirección exacta y su método de pago (Mercado Pago o Contra Entrega).
-                `;
+            INSTRUCCIONES:
+            1. Atiende a ${est.nombre} amablemente. Ya conoces su nombre y comuna, prohíbete volver a pedirlos.
+            2. Ayúdale con su pedido basándote en los precios de su zona indicados arriba.
+            `;
 
-                sesionesChat[telefonoLimpio] = model.startChat({
-                    history: [
-                        { role: "user", parts: [{ text: "Configuración inicial." }] },
-                        { role: "model", parts: [{ text: `Entendido. Atendiendo a ${est.nombre} de ${est.comuna} (${est.zona}).` }] }
-                    ]
-                });
-            }
-
-            const chatSession = sesionesChat[telefonoLimpio];
-            const resultado = await chatSession.sendMessage(textMessage);
+            const resultado = await model.generateContent(`${promptSistema}\n\nMensaje del cliente: "${textMessage}"`);
             let respuestaIA = resultado.response.text();
 
-            // Detectar si el usuario confirmó un pedido (Ej: menciona un producto y cantidad)
+            // Detección automática de intención de compra (ej: mención de bandejas o productos)
             const textoLower = textMessage.toLowerCase();
-            if (textoLower.includes("jumbo") || textoLower.includes("extra") || textoLower.includes("primera") || textoLower.includes("bandeja")) {
-                // Seleccionar producto por defecto o buscar coincidencia básica (ej: PROD-001 para Jumbo)
-                let prodSeleccionado = catalogo[0]; 
+            if (textoLower.includes("jumbo") || textoLower.includes("extra") || textoLower.includes("primera") || textoLower.includes("bandeja") || textoLower.includes("unidades")) {
+                
+                // Seleccionar producto según la mención o usar el primero (Jumbo por defecto)
+                let productoElegido = catalogo[0];
+                if (textoLower.includes("extra")) productoElegido = catalogo[1] || catalogo[0];
+                if (textoLower.includes("primera") || textoLower.includes("grande")) productoElegido = catalogo[2] || catalogo[0];
+                if (textoLower.includes("segunda") || textoLower.includes("mediano")) productoElegido = catalogo[3] || catalogo[0];
+
                 let cantidad = 1;
                 let matchCant = textMessage.match(/\d+/);
                 if (matchCant) cantidad = parseInt(matchCant[0]);
 
-                let totalCalculado = prodSeleccionado.precioStgo1 * cantidad;
-                if (zonaCliente.includes("sector 2")) totalCalculado = prodSeleccionado.precioStgo2 * cantidad;
+                let precioUnitario = productosMap[productoElegido.id] ? productosMap[productoElegido.id].precio : 6000;
+                let totalCalculado = precioUnitario * cantidad;
 
-                // Crear enlace de Mercado Pago si mpClient está disponible
+                // Crear enlace de pago en Mercado Pago de forma automática
                 let linkPagoFinal = "";
                 if (mpClient) {
                     try {
@@ -209,7 +206,7 @@ async function startBot() {
                         const prefResponse = await preference.create({
                             body: {
                                 items: [{
-                                    title: `${prodSeleccionado.categoria} x${cantidad}`,
+                                    title: `${productoElegido.categoria} (${productoElegido.formato}) x${cantidad}`,
                                     quantity: cantidad,
                                     unit_price: totalCalculado,
                                     currency_id: "CLP"
@@ -220,16 +217,16 @@ async function startBot() {
                         linkPagoFinal = prefResponse.init_point;
                         respuestaIA += `\n\n🔗 *Link de pago seguro (Mercado Pago):* ${linkPagoFinal}`;
                     } catch (mpErr) {
-                        console.error("[Mercado Pago Preference Error]:", mpErr.message);
+                        console.error("[Mercado Pago Error]:", mpErr.message);
                     }
                 }
 
-                // Guardar automáticamente el pedido en Google Sheets
+                // Guardar el pedido limpio y ordenado en Google Sheets
                 await guardarPedidoEnSheets({
                     idPedido: "PED-" + Math.floor(1000 + Math.random() * 9000),
                     nombreCliente: est.nombre,
                     telefono: telefonoLimpio,
-                    idProducto: prodSeleccionado.id,
+                    idProducto: productoElegido.id,
                     cantidad: cantidad,
                     total: totalCalculado,
                     metodoPago: "Mercado Pago",
