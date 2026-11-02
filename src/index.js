@@ -23,7 +23,6 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_SEGURO = "gemini-1.5-flash";
 
-// Memoria de estado estricta por número de teléfono
 const memoriaClientes = {};
 const processedMessages = new Set();
 
@@ -88,13 +87,13 @@ async function startBot() {
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
             const telSufijo = telefonoLimpio.slice(-8);
 
-            // Cargar datos actuales desde Google Sheets
+            // Cargar datos actualizados desde Google Sheets
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const clientesMap = datosSheet.clientes || {};
             const despachos = datosSheet.despachos || [];
 
-            // Verificar si el cliente ya existe en la base de datos de Excel
+            // Buscar si el cliente ya existe en el Sheet por sufijo telefónico
             let clienteSheet = null;
             for (let telKey in clientesMap) {
                 const keyClean = String(telKey).replace(/\D/g, '');
@@ -104,30 +103,28 @@ async function startBot() {
                 }
             }
 
-            // Inicializar o recuperar el estado conversacional del usuario
+            // Inicializar memoria de estado si no existe
             if (!memoriaClientes[telefonoLimpio]) {
                 memoriaClientes[telefonoLimpio] = {
                     nombre: clienteSheet ? clienteSheet.nombre : null,
                     comuna: clienteSheet ? clienteSheet.comuna : null,
                     direccion: clienteSheet ? clienteSheet.direccion : null,
                     zona: "Santiago Sector 1",
-                    paso: clienteSheet ? "LISTO_PARA_PEDIR" : "ESPERANDO_NOMBRE"
+                    paso: clienteSheet ? "LISTO_PARA_PEDIR" : "ESPERANDO_DATOS"
                 };
             }
             let est = memoriaClientes[telefonoLimpio];
 
-            // MÁQUINA DE ESTADOS POR PASOS (Evita amnesia y preguntas repetidas)
-            if (est.paso === "ESPERANDO_NOMBRE") {
-                est.nombre = textMessage;
-                est.paso = "ESPERANDO_COMUNA";
-                await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué comuna nos escribes para indicarte los precios y tarifas exactas?` });
-                return;
+            // Si el cliente ya está en Excel pero la memoria estaba limpia, sincronizamos
+            if (clienteSheet && est.paso !== "LISTO_PARA_PEDIR") {
+                est.nombre = clienteSheet.nombre;
+                est.comuna = clienteSheet.comuna;
+                est.direccion = clienteSheet.direccion;
+                est.paso = "LISTO_PARA_PEDIR";
             }
 
-            if (est.paso === "ESPERANDO_COMUNA") {
-                est.comuna = textMessage;
-                
-                // Buscar zona correspondiente en la lista de despachos
+            // Buscar la zona de despacho según la comuna actual
+            if (est.comuna) {
                 let zonaEncontrada = "Santiago Sector 1";
                 for (let d of despachos) {
                     if (d.comuna.toLowerCase() === est.comuna.toLowerCase()) {
@@ -136,13 +133,64 @@ async function startBot() {
                     }
                 }
                 est.zona = zonaEncontrada;
-                est.paso = "LISTO_PARA_PEDIR";
-                
-                await sock.sendMessage(currentJid, { text: `¡Perfecto! Veo que eres de *${est.comuna}* (${est.zona}). ¿Qué productos o cuántas bandejas te gustaría llevar hoy?` });
-                return;
             }
 
-            // Si ya está registrado y en zona, armar el catálogo con precios específicos
+            // MÁQUINA DE ESTADOS INTELIGENTE PARA CLIENTES NUEVOS
+            if (est.paso === "ESPERANDO_DATOS") {
+                // Usamos Gemini para extraer de forma inteligente el nombre y la comuna del mensaje del usuario
+                const modelExtraccion = genAI.getGenerativeModel({ model: MODELO_SEGURO });
+                const promptExtraccion = `Analiza el siguiente mensaje de un cliente nuevo de Huevos Santa Estela: "${textMessage}"
+                Extrae su nombre y su comuna si aparecen. Responde ÚNICAMENTE en formato JSON plano con esta estructura exacta, sin bloques de código markdown:
+                {"nombre": "nombre extraído o null", "comuna": "comuna extraída o null"}`;
+
+                try {
+                    const resExt = await modelExtraccion.generateContent(promptExtraccion);
+                    const jsonTxt = resExt.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+                    const datosExtraidos = JSON.parse(jsonTxt);
+
+                    if (datosExtraidos.nombre && !est.nombre) est.nombre = datosExtraidos.nombre;
+                    if (datosExtraidos.comuna && !est.comuna) est.comuna = datosExtraidos.comuna;
+                } catch (e) {
+                    // Si falla el parseo inteligente, guardamos de forma directa el mensaje como nombre si no lo tenía
+                    if (!est.nombre) est.nombre = textMessage;
+                }
+
+                // Si aún nos falta el nombre
+                if (!est.nombre) {
+                    await sock.sendMessage(currentJid, { text: `¡Hola! Qué gusto saludarte en *Huevos Santa Estela* 🥚. Para brindarte la mejor atención, ¿podrías indicarme tu *nombre* por favor?` });
+                    return;
+                }
+
+                // Si ya tenemos el nombre pero nos falta la comuna
+                if (!est.comuna) {
+                    est.paso = "ESPERANDO_COMUNA";
+                    await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué *comuna* nos escribes para indicarte los precios y tarifas exactas para tu zona?` });
+                    return;
+                }
+
+                // Si ya tenemos ambos datos capturados
+                est.paso = "LISTO_PARA_PEDIR";
+            }
+
+            // Si estaba esperando específicamente la comuna en el paso anterior
+            if (est.paso === "ESPERANDO_COMUNA") {
+                est.comuna = textMessage.trim();
+                est.paso = "LISTO_PARA_PEDIR";
+            }
+
+            // Actualizar zona tras tener comuna segura
+            if (est.comuna) {
+                let zonaEncontrada = "Santiago Sector 1";
+                for (let d of despachos) {
+                    if (d.comuna.toLowerCase() === est.comuna.toLowerCase()) {
+                        zonaEncontrada = d.zona;
+                        break;
+                    }
+                }
+                est.zona = zonaEncontrada;
+            }
+
+            // --- BLOQUE DE ATENCIÓN Y COMPRA (LISTO_PARA_PEDIR) ---
             let zonaCliente = (est.zona || "").toLowerCase();
             let catalogoTexto = "";
             let productosMap = {};
@@ -160,11 +208,10 @@ async function startBot() {
                 catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion} - ${p.formato}) -> Precio: $${precioFinal} CLP\n`;
             });
 
-            // Procesar la solicitud con Gemini usando el contexto fijo del cliente
             const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
             let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
             
-            DATOS OFICIALES DEL CLIENTE (NO LOS CAMBIES NI LOS PIDAS DE NUEVO):
+            DATOS OFICIALES DEL CLIENTE (ESTRICTAMENTE PROHIBIDO VOLVER A PEDIR NOMBRE O COMUNA):
             - Nombre: ${est.nombre}
             - Comuna: ${est.comuna}
             - Zona de Despacho: ${est.zona}
@@ -174,18 +221,18 @@ async function startBot() {
             ${catalogoTexto}
 
             INSTRUCCIONES:
-            1. Atiende a ${est.nombre} amablemente. Ya conoces su nombre y comuna, prohíbete volver a pedirlos.
-            2. Ayúdale con su pedido basándote en los precios de su zona indicados arriba.
+            1. Atiende a ${est.nombre} amablemente sabiendo que es de ${est.comuna} (${est.zona}).
+            2. Si el cliente saluda por primera vez o pregunta por precios, muéstrale el catálogo actualizado de su zona y pregúntale qué desea llevar.
+            3. Si ya hizo un pedido o menciona cantidades, confírmale el total y el proceso.
             `;
 
             const resultado = await model.generateContent(`${promptSistema}\n\nMensaje del cliente: "${textMessage}"`);
             let respuestaIA = resultado.response.text();
 
-            // Detección automática de intención de compra (ej: mención de bandejas o productos)
+            // Detección automática de intención de compra
             const textoLower = textMessage.toLowerCase();
-            if (textoLower.includes("jumbo") || textoLower.includes("extra") || textoLower.includes("primera") || textoLower.includes("bandeja") || textoLower.includes("unidades")) {
+            if (textoLower.includes("jumbo") || textoLower.includes("extra") || textoLower.includes("primera") || textoLower.includes("bandeja") || textoLower.includes("unidades") || textoLower.includes("llevar") || textoLower.includes("quiero")) {
                 
-                // Seleccionar producto según la mención o usar el primero (Jumbo por defecto)
                 let productoElegido = catalogo[0];
                 if (textoLower.includes("extra")) productoElegido = catalogo[1] || catalogo[0];
                 if (textoLower.includes("primera") || textoLower.includes("grande")) productoElegido = catalogo[2] || catalogo[0];
@@ -198,7 +245,6 @@ async function startBot() {
                 let precioUnitario = productosMap[productoElegido.id] ? productosMap[productoElegido.id].precio : 6000;
                 let totalCalculado = precioUnitario * cantidad;
 
-                // Crear enlace de pago en Mercado Pago de forma automática
                 let linkPagoFinal = "";
                 if (mpClient) {
                     try {
@@ -221,17 +267,16 @@ async function startBot() {
                     }
                 }
 
-                // Guardar el pedido limpio y ordenado en Google Sheets
                 await guardarPedidoEnSheets({
                     idPedido: "PED-" + Math.floor(1000 + Math.random() * 9000),
-                    nombreCliente: est.nombre,
+                    nombreCliente: est.nombre || "Cliente WhatsApp",
                     telefono: telefonoLimpio,
                     idProducto: productoElegido.id,
                     cantidad: cantidad,
                     total: totalCalculado,
                     metodoPago: "Mercado Pago",
-                    comuna: est.comuna,
-                    direccion: est.direccion || est.comuna,
+                    comuna: est.comuna || "Santiago",
+                    direccion: est.direccion || est.comuna || "Por confirmar",
                     linkPago: linkPagoFinal
                 });
             }
