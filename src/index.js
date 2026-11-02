@@ -19,15 +19,14 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_ESTABLE = "gemini-3.5-flash-lite";
 
-// Memoria temporal robusta para mantener el contexto y sesión por usuario
-const sesionesUsuarios = {};
+// Memoria persistente simple por número de teléfono
+const memoriaUsuarios = {};
 
-async function generarRespuestaIA(historialChat, textoUsuario) {
+async function generarRespuestaDirecta(promptSistema, textoUsuario) {
     try {
         const modelo = genAI.getGenerativeModel({ model: MODELO_ESTABLE });
-        const chat = modelo.startChat({ history: historialChat });
-        const result = await chat.sendMessage(textoUsuario);
-        return result.response.text();
+        const resultado = await modelo.generateContent(`${promptSistema}\n\nMensaje del cliente: "${textoUsuario}"`);
+        return resultado.response.text();
     } catch (error) {
         console.error(`[Gemini Error]:`, error.message);
         throw error;
@@ -80,7 +79,7 @@ async function registrarPedidoSheets(idPedido, idProducto, cantidad, clienteJid,
                 idProducto: idProducto || 'PROD-001',
                 cantidad: parseInt(cantidad) || 1, total: parseInt(total) || 0,
                 metodoPago: metodoPago || 'Por confirmar', direccion: direccion || 'Por confirmar',
-                linkPago: linkPago || '', idPagoMP: idPagoMP || ''
+                linkLinkPago: linkPago || '', idPagoMP: idPagoMP || ''
             })
         });
     } catch (e) {
@@ -107,30 +106,6 @@ async function obtenerDatosSheets() {
     } catch (e) {
         console.error("[Sheets Error - Obtener Datos]:", e.message);
         return { stock: [], clientes: {}, despachos: [], vendedores: [] };
-    }
-}
-
-async function notificarVendedores(sock, clienteInfo, comunaIngresada, listaVendedores) {
-    const mensajeAlerta = `🚨 *NUEVA INCIDENCIA / DESPACHO FUERA DE ZONA* 🚨\n\n` +
-                          `👤 *Cliente*: ${clienteInfo.nombre || 'Cliente WhatsApp'}\n` +
-                          `📱 *Teléfono*: ${clienteInfo.telefono}\n` +
-                          `📍 *Comuna ingresada*: ${comunaIngresada}\n` +
-                          `⚠️ *Estado*: Requiere validación y posible cobro extra (Se usó referencia Stgo Sector 2).`;
-
-    const vendedoresACotizar = (listaVendedores && listaVendedores.length > 0) ? listaVendedores : [
-        { nombre: 'Lorenzo Macaya', telefono: '56982295850' },
-        { nombre: 'Hugo Silva', telefono: '56990011731' }
-    ];
-
-    for (let v of vendedoresACotizar) {
-        try {
-            const telLimpio = String(v.telefono || '').replace(/\D/g, '');
-            if (telLimpio) {
-                await sock.sendMessage(telLimpio + '@s.whatsapp.net', { text: mensajeAlerta });
-            }
-        } catch (errVendedor) {
-            console.error(`[Error Alerta Vendedor]`, errVendedor.message);
-        }
     }
 }
 
@@ -163,151 +138,96 @@ async function startBot() {
             const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
             if (!textMessage) return;
 
-            if (!sesionesUsuarios[currentJid]) {
-                sesionesUsuarios[currentJid] = {
-                    nombre: null,
-                    comuna: null,
-                    zona: null,
-                    historial: []
-                };
+            const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
+
+            if (!memoriaUsuarios[telefonoLimpio]) {
+                memoriaUsuarios[telefonoLimpio] = { nombre: null, comuna: null, zona: null };
             }
-            const sesion = sesionesUsuarios[currentJid];
+            const usuario = memoriaUsuarios[telefonoLimpio];
 
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const infoClientes = datosSheet.clientes || {};
             const lugaresDespacho = datosSheet.despachos || [];
-            const listaVendedoresSheets = datosSheet.vendedores || [];
 
-            const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
-            let clienteConocido = null;
-
+            // Buscar en clientes del Excel
             const telSufijo = telefonoLimpio.slice(-8);
             for (let telKey in infoClientes) {
                 const keyClean = String(telKey).replace(/\D/g, '');
                 if (keyClean === telefonoLimpio || keyClean.endsWith(telSufijo) || telefonoLimpio.endsWith(keyClean.slice(-8))) {
-                    clienteConocido = infoClientes[telKey];
+                    const cli = infoClientes[telKey];
+                    if (cli.nombre) usuario.nombre = cli.nombre;
+                    if (cli.comuna) usuario.comuna = cli.comuna;
                     break;
                 }
-            }
-
-            if (clienteConocido) {
-                if (!sesion.nombre) sesion.nombre = clienteConocido.nombre;
-                if (!sesion.comuna) sesion.comuna = clienteConocido.comuna || clienteConocido.direccion;
             }
 
             const textoLimpio = textMessage.trim();
 
+            // Detectar comuna si la menciona
             for (let d of lugaresDespacho) {
                 if (d.comuna && textoLimpio.toLowerCase().includes(d.comuna.toLowerCase())) {
-                    sesion.comuna = d.comuna;
-                    sesion.zona = d.zona;
+                    usuario.comuna = d.comuna;
+                    usuario.zona = d.zona;
                     break;
                 }
             }
 
-            if (!sesion.nombre && !/^\d+$/.test(textoLimpio) && textoLimpio.length > 2 && !textoLimpio.toLowerCase().includes('hola')) {
+            // Detectar nombre si lo escribe
+            if (!usuario.nombre && !/^\d+$/.test(textoLimpio) && textoLimpio.length > 2 && !textoLimpio.toLowerCase().includes('hola')) {
                 const partes = textoLimpio.split(',');
+                usuario.nombre = partes[0].trim();
                 if (partes.length > 1) {
-                    sesion.nombre = partes[0].trim();
                     const posibleComuna = partes[1].trim();
                     for (let d of lugaresDespacho) {
                         if (d.comuna && posibleComuna.toLowerCase().includes(d.comuna.toLowerCase())) {
-                            sesion.comuna = d.comuna;
-                            sesion.zona = d.zona;
+                            usuario.comuna = d.comuna;
+                            usuario.zona = d.zona;
                         }
                     }
-                } else if (!sesion.nombre) {
-                    sesion.nombre = textoLimpio;
                 }
             }
 
-            let zonaAplicada = sesion.zona || "Santiago Sector 1";
-            if (sesion.comuna) {
+            let zonaAplicada = usuario.zona || "Santiago Sector 1";
+            if (usuario.comuna) {
                 for (let d of lugaresDespacho) {
-                    if (d.comuna && sesion.comuna.toLowerCase().includes(d.comuna.toLowerCase())) {
+                    if (d.comuna && usuario.comuna.toLowerCase().includes(d.comuna.toLowerCase())) {
                         zonaAplicada = d.zona || "Santiago Sector 1";
                         break;
                     }
                 }
             }
 
-            let catalogoTextoPrecios = "";
+            let catalogoTexto = "";
             catalogo.forEach(p => {
                 let precioZona = p.precio;
-                const zonaLower = zonaAplicada.toLowerCase();
-                
-                if (zonaLower.includes('linares')) {
-                    precioZona = p.precioLinares || p.precio;
-                } else if (zonaLower.includes('sector 2')) {
-                    precioZona = p.precioStgo2 || p.precio + 500;
-                } else {
-                    precioZona = p.precioStgo1 || p.precio;
-                }
-                
-                catalogoTextoPrecios += `- ID: ${p.id} | ${p.categoria} (${p.descripcion}) | Precio oficial para ${zonaAplicada}: $${precioZona} CLP\n`;
+                const zl = zonaAplicada.toLowerCase();
+                if (zl.includes('linares')) precioZona = p.precioLinares || p.precio;
+                else if (zl.includes('sector 2')) precioZona = p.precioStgo2 || p.precio + 500;
+                else precioZona = p.precioStgo1 || p.precio;
+
+                catalogoTexto += `- [ID: ${p.id}] ${p.categoria} (${p.descripcion}) -> Precio en ${zonaAplicada}: $${precioZona} CLP\n`;
             });
 
             let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
             
-            DATOS ACTUALES DEL CLIENTE:
-            - Nombre: ${sesion.nombre || (clienteConocido ? clienteConocido.nombre : 'Por definir')}
-            - Comuna: ${sesion.comuna || (clienteConocido ? clienteConocido.comuna : 'Por definir')}
-            - Zona de Despacho: ${zonaAplicada}
+            ESTADO ACTUAL DEL CLIENTE:
+            - Nombre registrado: ${usuario.nombre || 'No registrado'}
+            - Comuna registrada: ${usuario.comuna || 'No registrada'}
+            - Zona asignada: ${zonaAplicada}
 
-            CATÁLOGO Y PRECIOS OFICIALES PARA SU ZONA (${zonaAplicada}):
-            ${catalogoTextoPrecios}
+            CATÁLOGO Y PRECIOS OFICIALES PARA SU ZONA:
+            ${catalogoTexto}
 
-            INSTRUCCIONES CLAVE E INQUEBRANTABLES:
-            1. MEMORIA DE CLIENTE: Si el cliente ya tiene nombre y comuna definidos arriba, salúdalo por su nombre y recuérdale su comuna. ¡ESTÁ PROHIBIDO volver a pedirle el nombre o la comuna si ya los tenemos en los datos actuales!
-            2. PRECIOS OBLIGATORIOS: Si el cliente pregunta por precios, valores o catálogo, DEBES listar los productos con sus precios exactos en pesos chilenos ($ CLP) extraídos estrictamente de la lista de precios oficial detallada arriba para su zona. Nunca omitas los precios. Prohibido mencionar stock.
-            3. CIERRE DE PEDIDO: Cuando tengas producto, cantidad, método de pago y dirección, genera al final el JSON exacto:
+            REGLAS ESTRICTAS:
+            1. SI EL CLIENTE YA TIENE NOMBRE Y COMUNA: Salúdalo por su nombre, recuérdale su comuna y MUESTRA DE INMEDIATO LOS PRECIOS EXACTOS del catálogo detallado arriba según su zona si los solicita o si pregunta por ellos. ¡NUNCA vuelvas a pedir el nombre ni la comuna si ya los tenemos!
+            2. SI FALTA EL NOMBRE O LA COMUNA: Pídeselos amablemente.
+            3. PROHIBICIÓN: Nunca menciones la palabra stock o disponibilidad.
+            4. PEDIDOS: Si indica producto, cantidad, pago y dirección, agrega al final:
             [REGISTRAR_PEDIDO:{"idPedido":"PED-${Math.floor(1000 + Math.random() * 9000)}","idProducto":"<ID>","cantidad":<NUM>,"total":<NUM>,"metodoPago":"<METODO>","direccion":"<DIRECCION>","nombreCliente":"<NOMBRE>","telefonoContacto":"<TEL>"}]
             `;
 
-            if (sesion.historial.length === 0) {
-                sesion.historial.push({ role: "user", parts: [{ text: promptSistema }] });
-                sesion.historial.push({ role: "model", parts: [{ text: "Entendido. Operaré estrictamente con estos datos y precios por zona." }] });
-            }
-
-            const respuestaIA = await generarRespuestaIA(sesion.historial, textMessage);
-
-            sesion.historial.push({ role: "user", parts: [{ text: textMessage }] });
-            sesion.historial.push({ role: "model", parts: [{ text: respuestaIA }] });
-            if (sesion.historial.length > 15) sesion.historial.splice(2, 2);
-
-            const matchPedido = respuestaIA.match(/\[REGISTRAR_PEDIDO:(.*?)\]/);
-            if (matchPedido) {
-                try {
-                    const datosPedido = JSON.parse(matchPedido[1]);
-                    const direccionLower = datosPedido.direccion.toLowerCase();
-                    const esFueraDeZona = !lugaresDespacho.some(d => direccionLower.includes(d.comuna?.toLowerCase()));
-
-                    if (esFueraDeZona) {
-                        await notificarVendedores(sock, { nombre: datosPedido.nombreCliente, telefono: datosPedido.telefonoContacto || telefonoLimpio }, datosPedido.direccion, listaVendedoresSheets);
-                    }
-
-                    let linkPagoGenerado = "";
-                    let idPagoMPGenerado = "EFECTIVO/CONTRA_ENTREGA";
-                    if (datosPedido.metodoPago.toLowerCase().includes('mercado')) {
-                        const datosMp = await generarLinkMercadoPago(datosPedido.idPedido, datosPedido.total, `Huevos Santa Estela (${datosPedido.idProducto})`);
-                        linkPagoGenerado = datosMp.initPoint;
-                        idPagoMPGenerado = datosMp.preferenceId;
-                    }
-
-                    await registrarPedidoSheets(datosPedido.idPedido, datosPedido.idProducto, datosPedido.cantidad, currentJid, datosPedido.total, datosPedido.metodoPago, datosPedido.direccion, datosPedido.nombreCliente, datosPedido.telefonoContacto, linkPagoGenerado, idPagoMPGenerado);
-
-                    let respuestaLimpia = respuestaIA.replace(/\[REGISTRAR_PEDIDO:.*?\]/, '');
-                    if (linkPagoGenerado) respuestaLimpia += `\n\n💳 *Enlace de Pago Mercado Pago ($${datosPedido.total} CLP):*\n${linkPagoGenerado}`;
-                    if (esFueraDeZona) respuestaLimpia += `\n\n⚠️ *Nota:* Como tu comuna requiere validación especial, hemos notificado a nuestros vendedores.`;
-
-                    await sock.sendMessage(currentJid, { text: respuestaLimpia });
-                    return;
-                } catch (errJson) {
-                    console.error("[Error Parseando Pedido]:", errJson.message);
-                }
-            }
-
+            const respuestaIA = await generarRespuestaDirecta(promptSistema, textMessage);
             await sock.sendMessage(currentJid, { text: respuestaIA });
 
         } catch (error) {
