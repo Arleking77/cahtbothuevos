@@ -4,6 +4,7 @@ import { MercadoPagoConfig, Preference } from 'mercadopago';
 import dotenv from 'dotenv';
 import http from 'http';
 import fetch from 'node-fetch';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -23,7 +24,29 @@ if (MP_ACCESS_TOKEN) {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const MODELO_SEGURO = "gemini-1.5-flash";
 
-const memoriaClientes = {};
+// Archivo local para persistencia de estados (evita amnesia si el bot se reinicia)
+const ESTADOS_FILE = './clientes_estado.json';
+let memoriaClientes = {};
+
+function cargarMemoria() {
+    try {
+        if (fs.existsSync(ESTADOS_FILE)) {
+            memoriaClientes = JSON.parse(fs.readFileSync(ESTADOS_FILE, 'utf8'));
+        }
+    } catch (e) {
+        memoriaClientes = {};
+    }
+}
+
+function guardarMemoria() {
+    try {
+        fs.writeFileSync(ESTADOS_FILE, JSON.stringify(memoriaClientes, null, 2));
+    } catch (e) {
+        console.error("[Error guardando memoria local]:", e.message);
+    }
+}
+
+cargarMemoria();
 const processedMessages = new Set();
 
 async function obtenerDatosSheets() {
@@ -85,15 +108,15 @@ async function startBot() {
             if (!textMessage) return;
 
             const telefonoLimpio = currentJid.split('@')[0].replace(/\D/g, '');
-            const telSufijo = telefonoLimpio.slice(-8);
+            const telSufijo = telefonoLimpio.slice(-8); // Últimos 8 dígitos para comparar flexible
 
-            // Cargar datos actualizados desde Google Sheets
+            // Cargar datos desde Google Sheets
             const datosSheet = await obtenerDatosSheets();
             const catalogo = datosSheet.stock || [];
             const clientesMap = datosSheet.clientes || {};
             const despachos = datosSheet.despachos || [];
 
-            // Buscar si el cliente ya existe en el Sheet por sufijo telefónico
+            // Buscar si el cliente existe en el Sheet con coincidencia amplia
             let clienteSheet = null;
             for (let telKey in clientesMap) {
                 const keyClean = String(telKey).replace(/\D/g, '');
@@ -103,7 +126,7 @@ async function startBot() {
                 }
             }
 
-            // Inicializar memoria de estado si no existe
+            // Inicializar o recuperar estado del cliente
             if (!memoriaClientes[telefonoLimpio]) {
                 memoriaClientes[telefonoLimpio] = {
                     nombre: clienteSheet ? clienteSheet.nombre : null,
@@ -112,36 +135,25 @@ async function startBot() {
                     zona: "Santiago Sector 1",
                     paso: clienteSheet ? "LISTO_PARA_PEDIR" : "ESPERANDO_DATOS"
                 };
+                guardarMemoria();
             }
             let est = memoriaClientes[telefonoLimpio];
 
-            // Si el cliente ya está en Excel pero la memoria estaba limpia, sincronizamos
+            // Si está en el Excel pero su paso no era listo, forzamos a listo
             if (clienteSheet && est.paso !== "LISTO_PARA_PEDIR") {
                 est.nombre = clienteSheet.nombre;
                 est.comuna = clienteSheet.comuna;
                 est.direccion = clienteSheet.direccion;
                 est.paso = "LISTO_PARA_PEDIR";
+                guardarMemoria();
             }
 
-            // Buscar la zona de despacho según la comuna actual
-            if (est.comuna) {
-                let zonaEncontrada = "Santiago Sector 1";
-                for (let d of despachos) {
-                    if (d.comuna.toLowerCase() === est.comuna.toLowerCase()) {
-                        zonaEncontrada = d.zona;
-                        break;
-                    }
-                }
-                est.zona = zonaEncontrada;
-            }
-
-            // MÁQUINA DE ESTADOS INTELIGENTE PARA CLIENTES NUEVOS
+            // Máquina de estados para capturar datos si es nuevo
             if (est.paso === "ESPERANDO_DATOS") {
-                // Usamos Gemini para extraer de forma inteligente el nombre y la comuna del mensaje del usuario
                 const modelExtraccion = genAI.getGenerativeModel({ model: MODELO_SEGURO });
-                const promptExtraccion = `Analiza el siguiente mensaje de un cliente nuevo de Huevos Santa Estela: "${textMessage}"
-                Extrae su nombre y su comuna si aparecen. Responde ÚNICAMENTE en formato JSON plano con esta estructura exacta, sin bloques de código markdown:
-                {"nombre": "nombre extraído o null", "comuna": "comuna extraída o null"}`;
+                const promptExtraccion = `Analiza el mensaje de este cliente: "${textMessage}"
+                Extrae su nombre y comuna si los menciona. Responde ÚNICAMENTE en JSON plano:
+                {"nombre": "nombre o null", "comuna": "comuna o null"}`;
 
                 try {
                     const resExt = await modelExtraccion.generateContent(promptExtraccion);
@@ -151,34 +163,32 @@ async function startBot() {
                     if (datosExtraidos.nombre && !est.nombre) est.nombre = datosExtraidos.nombre;
                     if (datosExtraidos.comuna && !est.comuna) est.comuna = datosExtraidos.comuna;
                 } catch (e) {
-                    // Si falla el parseo inteligente, guardamos de forma directa el mensaje como nombre si no lo tenía
                     if (!est.nombre) est.nombre = textMessage;
                 }
 
-                // Si aún nos falta el nombre
                 if (!est.nombre) {
-                    await sock.sendMessage(currentJid, { text: `¡Hola! Qué gusto saludarte en *Huevos Santa Estela* 🥚. Para brindarte la mejor atención, ¿podrías indicarme tu *nombre* por favor?` });
+                    await sock.sendMessage(currentJid, { text: `¡Hola! Qué gusto saludarte en *Huevos Santa Estela* 🥚. ¿Podrías indicarme tu *nombre* por favor?` });
                     return;
                 }
 
-                // Si ya tenemos el nombre pero nos falta la comuna
                 if (!est.comuna) {
                     est.paso = "ESPERANDO_COMUNA";
-                    await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué *comuna* nos escribes para indicarte los precios y tarifas exactas para tu zona?` });
+                    guardarMemoria();
+                    await sock.sendMessage(currentJid, { text: `¡Mucho gusto, ${est.nombre}! ¿De qué *comuna* nos escribes para indicarte los precios?` });
                     return;
                 }
 
-                // Si ya tenemos ambos datos capturados
                 est.paso = "LISTO_PARA_PEDIR";
+                guardarMemoria();
             }
 
-            // Si estaba esperando específicamente la comuna en el paso anterior
             if (est.paso === "ESPERANDO_COMUNA") {
                 est.comuna = textMessage.trim();
                 est.paso = "LISTO_PARA_PEDIR";
+                guardarMemoria();
             }
 
-            // Actualizar zona tras tener comuna segura
+            // Asignar zona de despacho según la comuna
             if (est.comuna) {
                 let zonaEncontrada = "Santiago Sector 1";
                 for (let d of despachos) {
@@ -190,7 +200,7 @@ async function startBot() {
                 est.zona = zonaEncontrada;
             }
 
-            // --- BLOQUE DE ATENCIÓN Y COMPRA (LISTO_PARA_PEDIR) ---
+            // --- BLOQUE DE ATENCIÓN Y COMPRA ---
             let zonaCliente = (est.zona || "").toLowerCase();
             let catalogoTexto = "";
             let productosMap = {};
@@ -209,7 +219,7 @@ async function startBot() {
             });
 
             const model = genAI.getGenerativeModel({ model: MODELO_SEGURO });
-            let promptSistema = `Eres el asistente virtual experto, directo y amable de "Huevos Santa Estela".
+            let promptSistema = `Eres el asistente virtual experto y amable de "Huevos Santa Estela".
             
             DATOS OFICIALES DEL CLIENTE (ESTRICTAMENTE PROHIBIDO VOLVER A PEDIR NOMBRE O COMUNA):
             - Nombre: ${est.nombre}
@@ -222,11 +232,15 @@ async function startBot() {
 
             INSTRUCCIONES:
             1. Atiende a ${est.nombre} amablemente sabiendo que es de ${est.comuna} (${est.zona}).
-            2. Si el cliente saluda por primera vez o pregunta por precios, muéstrale el catálogo actualizado de su zona y pregúntale qué desea llevar.
-            3. Si ya hizo un pedido o menciona cantidades, confírmale el total y el proceso.
+            2. Ayúdale con su pedido basándote en los precios de su zona indicados arriba.
             `;
 
-            const resultado = await model.generateContent(`${promptSistema}\n\nMensaje del cliente: "${textMessage}"`);
+            let promptMensaje = textMessage;
+            if (clienteSheet && textMessage.toLowerCase() === "hola") {
+                promptMensaje = "Hola, vengo a hacer un pedido.";
+            }
+
+            const resultado = await model.generateContent(`${promptSistema}\n\nMensaje del cliente: "${promptMensaje}"`);
             let respuestaIA = resultado.response.text();
 
             // Detección automática de intención de compra
