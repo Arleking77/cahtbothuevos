@@ -16,10 +16,7 @@
     <div class="max-w-md mx-auto flex justify-between items-center gap-2">
       <div class="flex items-center gap-2 min-w-0">
         <i class="fa-solid fa-truck-fast text-2xl"></i>
-        <h1 class="font-bold text-lg leading-tight truncate">
-          Huevos Santa Estela<br>
-          <span class="text-xs font-normal opacity-90">Panel de Despacho</span>
-        </h1>
+        <h1 class="font-bold text-lg leading-tight truncate">Huevos Santa Estela<br><span class="text-xs font-normal opacity-90">Panel de Despacho</span></h1>
       </div>
       <button type="button" onclick="cargarPedidos()" class="bg-amber-600 hover:bg-amber-700 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-1 shadow">
         <i class="fa-solid fa-rotate-right" id="icon-reload"></i> Actualizar
@@ -29,18 +26,9 @@
 
   <main class="max-w-md mx-auto p-4 space-y-4">
     <div class="grid grid-cols-3 gap-2 text-center text-xs font-bold">
-      <div class="bg-white p-3 rounded-xl shadow border-l-4 border-yellow-500">
-        <p class="text-gray-500 uppercase">Pendientes</p>
-        <p id="count-pendiente" class="text-xl font-extrabold text-yellow-600">0</p>
-      </div>
-      <div class="bg-white p-3 rounded-xl shadow border-l-4 border-blue-500">
-        <p class="text-gray-500 uppercase">En Camino</p>
-        <p id="count-encamino" class="text-xl font-extrabold text-blue-600">0</p>
-      </div>
-      <div class="bg-white p-3 rounded-xl shadow border-l-4 border-green-500">
-        <p class="text-gray-500 uppercase">Entregados</p>
-        <p id="count-entregado" class="text-xl font-extrabold text-green-600">0</p>
-      </div>
+      <div class="bg-white p-3 rounded-xl shadow border-l-4 border-yellow-500"><p class="text-gray-500 uppercase">Pendientes</p><p id="count-pendiente" class="text-xl font-extrabold text-yellow-600">0</p></div>
+      <div class="bg-white p-3 rounded-xl shadow border-l-4 border-blue-500"><p class="text-gray-500 uppercase">En Camino</p><p id="count-encamino" class="text-xl font-extrabold text-blue-600">0</p></div>
+      <div class="bg-white p-3 rounded-xl shadow border-l-4 border-green-500"><p class="text-gray-500 uppercase">Entregados</p><p id="count-entregado" class="text-xl font-extrabold text-green-600">0</p></div>
     </div>
 
     <button type="button" onclick="abrirCreadorRuta()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow flex items-center justify-center gap-2">
@@ -48,7 +36,7 @@
     </button>
 
     <div class="space-y-2">
-      <input type="text" id="input-search" onkeyup="filtrarPedidos()" placeholder="🔍 Buscar por cliente, dirección o ID..." class="w-full p-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm">
+      <input type="text" id="input-search" onkeyup="filtrarPedidos()" placeholder="🔍 Buscar por cliente, dirección, comuna o ID..." class="w-full p-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm">
       <div class="flex gap-2 text-xs font-semibold overflow-x-auto pb-1">
         <button type="button" onclick="setFiltro('Todos')" id="btn-filtro-todos" class="px-3 py-1.5 rounded-full bg-amber-500 text-white shadow whitespace-nowrap">Todos</button>
         <button type="button" onclick="setFiltro('Pendiente')" id="btn-filtro-pendiente" class="px-3 py-1.5 rounded-full bg-gray-200 text-gray-700 whitespace-nowrap">Pendientes</button>
@@ -57,312 +45,139 @@
       </div>
     </div>
 
-    <div id="lista-pedidos" class="space-y-3">
-      <p class="text-center text-sm text-gray-500 py-8">Cargando pedidos...</p>
-    </div>
+    <div id="lista-pedidos" class="space-y-3"><p class="text-center text-sm text-gray-500 py-8">Cargando pedidos...</p></div>
   </main>
 
   <div id="modal-ruta" class="hidden fixed inset-0 z-50 modal-backdrop p-4 items-center justify-center">
     <div class="bg-white w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-4 space-y-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="font-extrabold text-lg text-gray-900">Crear ruta de reparto</h2>
-          <p class="text-xs text-gray-500">Selecciona pedidos Pendientes o En Camino.</p>
-        </div>
-        <button type="button" onclick="cerrarCreadorRuta()" class="w-9 h-9 rounded-full bg-gray-100 text-gray-600"><i class="fa-solid fa-xmark"></i></button>
+      <div class="flex justify-between items-start gap-3">
+        <div><h2 class="font-extrabold text-lg">Crear ruta de reparto</h2><p class="text-xs text-gray-500">Selecciona pedidos Pendientes o En Camino.</p></div>
+        <button type="button" onclick="cerrarCreadorRuta()" class="w-9 h-9 rounded-full bg-gray-100"><i class="fa-solid fa-xmark"></i></button>
       </div>
-
-      <label class="block text-xs font-bold text-gray-600">
-        Punto de partida
-        <input id="origen-ruta" type="text" value="San Bernardo, Chile" class="mt-1 w-full p-2.5 rounded-lg border border-gray-300">
-      </label>
-
-      <div class="flex gap-2">
-        <button type="button" onclick="seleccionarTodosRuta(true)" class="flex-1 bg-indigo-50 text-indigo-700 border border-indigo-200 py-2 rounded-lg text-xs font-bold">Seleccionar todos</button>
-        <button type="button" onclick="seleccionarTodosRuta(false)" class="flex-1 bg-gray-100 text-gray-700 border py-2 rounded-lg text-xs font-bold">Limpiar</button>
-      </div>
-
+      <label class="block text-xs font-bold text-gray-600">Punto de partida<input id="origen-ruta" type="text" value="San Bernardo, Chile" class="mt-1 w-full p-2.5 rounded-lg border border-gray-300"></label>
+      <div class="flex gap-2"><button type="button" onclick="seleccionarTodosRuta(true)" class="flex-1 bg-indigo-50 text-indigo-700 border border-indigo-200 py-2 rounded-lg text-xs font-bold">Seleccionar todos</button><button type="button" onclick="seleccionarTodosRuta(false)" class="flex-1 bg-gray-100 text-gray-700 border py-2 rounded-lg text-xs font-bold">Limpiar</button></div>
       <div id="lista-ruta" class="space-y-2"></div>
-
-      <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900">
-        <strong>Versión actual:</strong> crea una ruta de Google Maps con las paradas seleccionadas. El orden se arma agrupando primero por sector/dirección. Para optimización real por distancia y varios repartidores se necesitarán coordenadas o Google Maps Routes API.
-      </div>
-
-      <button type="button" onclick="generarRutaGoogleMaps()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow">
-        <i class="fa-solid fa-map-location-dot"></i> Abrir ruta en Google Maps
-      </button>
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900">La ruta usa <strong>dirección + comuna + Chile</strong> para reducir coincidencias ambiguas. La optimización avanzada por distancia y varios repartidores se puede agregar después.</div>
+      <button type="button" onclick="generarRutaGoogleMaps()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow"><i class="fa-solid fa-map-location-dot"></i> Abrir ruta en Google Maps</button>
     </div>
   </div>
 
-  <script>
-    const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbxQcEd5G9IoIFpJvwE90aXmc0kPqGyCRA3d4jBus39XOS20hHWFIVXBbp1iDVwwSW6T/exec";
+<script>
+const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbxQcEd5G9IoIFpJvwE90aXmc0kPqGyCRA3d4jBus39XOS20hHWFIVXBbp1iDVwwSW6T/exec";
+let todosLosPedidos = [];
+let mapaProductos = {};
+let mapaClientes = {};
+let filtroActual = "Todos";
 
-    let todosLosPedidos = [];
-    let mapaProductos = {};
-    let filtroActual = "Todos";
+function normalizarTexto(valor = "") { return String(valor).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim(); }
+function limpiarTelefono(valor = "") { return String(valor).replace(/[^0-9]/g, ""); }
+function formatearCLP(valor) { return Number(valor || 0).toLocaleString("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }); }
+function direccionMaps(p) { return [p.direccion, p.comuna, "Chile"].filter(Boolean).join(", "); }
 
-    function normalizarTexto(valor = "") {
-      return String(valor).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-    }
+async function cargarPedidos() {
+  const icon = document.getElementById("icon-reload");
+  icon.classList.add("fa-spin");
+  try {
+    const res = await fetch(`${URL_APPS_SCRIPT}?t=${Date.now()}`, { redirect: "follow", cache: "no-store" });
+    const data = await res.json();
+    if (data.status === "error") throw new Error(data.message || "Error Apps Script");
 
-    function formatearCLP(valor) {
-      return Number(valor || 0).toLocaleString("es-CL", {
-        style: "currency",
-        currency: "CLP",
-        maximumFractionDigits: 0
-      });
-    }
+    mapaProductos = {};
+    (data.productos || data.stock || []).forEach(prod => { mapaProductos[prod.id] = `${prod.categoria} ${prod.descripcion || ""}`.trim(); });
 
-    async function cargarPedidos() {
-      const iconReload = document.getElementById("icon-reload");
-      iconReload.classList.add("fa-spin");
+    mapaClientes = {};
+    Object.entries(data.clientes || {}).forEach(([telefono, cliente]) => {
+      mapaClientes[limpiarTelefono(telefono)] = cliente;
+      if (cliente && cliente.telefono) mapaClientes[limpiarTelefono(cliente.telefono)] = cliente;
+    });
 
-      try {
-        const res = await fetch(`${URL_APPS_SCRIPT}?t=${Date.now()}`, { redirect: "follow" });
-        const data = await res.json();
-        if (data.status === "error") throw new Error(data.message || "Error Apps Script");
+    const detallesPorPedido = data.detallesPorPedido || {};
+    todosLosPedidos = (data.pedidos || []).map(p => {
+      const clienteRegistrado = mapaClientes[limpiarTelefono(p.telefono)] || {};
+      return {
+        ...p,
+        comuna: p.comuna || clienteRegistrado.comuna || "",
+        direccion: p.direccion || clienteRegistrado.direccion || "",
+        detalles: Array.isArray(p.detalles) && p.detalles.length ? p.detalles : (detallesPorPedido[p.idPedido] || [])
+      };
+    });
 
-        mapaProductos = {};
-        (data.productos || data.stock || []).forEach(prod => {
-          mapaProductos[prod.id] = `${prod.categoria} ${prod.descripcion || ""}`.trim();
-        });
+    actualizarContadores();
+    filtrarPedidos();
+  } catch (error) {
+    console.error(error);
+    document.getElementById("lista-pedidos").innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm">⚠️ ${escapeHtml(error.message)}</div>`;
+  } finally { icon.classList.remove("fa-spin"); }
+}
 
-        const detallesPorPedido = data.detallesPorPedido || {};
-        todosLosPedidos = (data.pedidos || []).map(p => ({
-          ...p,
-          detalles: Array.isArray(p.detalles) && p.detalles.length
-            ? p.detalles
-            : (detallesPorPedido[p.idPedido] || [])
-        }));
+function actualizarContadores() {
+  document.getElementById("count-pendiente").textContent = todosLosPedidos.filter(p => normalizarTexto(p.estado) === "pendiente").length;
+  document.getElementById("count-encamino").textContent = todosLosPedidos.filter(p => normalizarTexto(p.estado) === "en camino").length;
+  document.getElementById("count-entregado").textContent = todosLosPedidos.filter(p => normalizarTexto(p.estado) === "entregado").length;
+}
 
-        actualizarContadores();
-        filtrarPedidos();
-      } catch (error) {
-        console.error("Error al cargar pedidos:", error);
-        document.getElementById("lista-pedidos").innerHTML = `
-          <div class="bg-red-50 text-red-700 p-4 rounded-xl text-center text-sm border border-red-200">
-            ⚠️ Error al conectar con Google Sheets: ${escapeHtml(error.message)}
-          </div>`;
-      } finally {
-        iconReload.classList.remove("fa-spin");
-      }
-    }
+function setFiltro(filtro) {
+  filtroActual = filtro;
+  const ids = { Todos:"todos", Pendiente:"pendiente", "En Camino":"encamino", Entregado:"entregado" };
+  Object.entries(ids).forEach(([nombre,id]) => {
+    document.getElementById(`btn-filtro-${id}`).className = nombre === filtro ? "px-3 py-1.5 rounded-full bg-amber-500 text-white shadow whitespace-nowrap" : "px-3 py-1.5 rounded-full bg-gray-200 text-gray-700 whitespace-nowrap";
+  });
+  filtrarPedidos();
+}
 
-    function actualizarContadores() {
-      document.getElementById("count-pendiente").innerText = todosLosPedidos.filter(p => normalizarTexto(p.estado) === "pendiente").length;
-      document.getElementById("count-encamino").innerText = todosLosPedidos.filter(p => normalizarTexto(p.estado) === "en camino").length;
-      document.getElementById("count-entregado").innerText = todosLosPedidos.filter(p => normalizarTexto(p.estado) === "entregado").length;
-    }
+function filtrarPedidos() {
+  const q = normalizarTexto(document.getElementById("input-search").value);
+  const filtrados = todosLosPedidos.filter(p => {
+    const coincideEstado = filtroActual === "Todos" || normalizarTexto(p.estado) === normalizarTexto(filtroActual);
+    const texto = normalizarTexto(`${p.cliente} ${p.direccion} ${p.comuna} ${p.idPedido} ${p.telefono}`);
+    return coincideEstado && texto.includes(q);
+  }).slice().reverse();
+  const cont = document.getElementById("lista-pedidos");
+  cont.innerHTML = filtrados.length ? filtrados.map(tarjetaPedido).join("") : `<p class="text-center text-sm text-gray-500 py-8">No hay pedidos que coincidan.</p>`;
+}
 
-    function setFiltro(filtro) {
-      filtroActual = filtro;
-      const ids = { Todos: "todos", Pendiente: "pendiente", "En Camino": "encamino", Entregado: "entregado" };
-      Object.entries(ids).forEach(([nombre, id]) => {
-        const btn = document.getElementById(`btn-filtro-${id}`);
-        btn.className = nombre === filtro
-          ? "px-3 py-1.5 rounded-full bg-amber-500 text-white shadow whitespace-nowrap"
-          : "px-3 py-1.5 rounded-full bg-gray-200 text-gray-700 whitespace-nowrap";
-      });
-      filtrarPedidos();
-    }
+function tarjetaPedido(p) {
+  const estado = normalizarTexto(p.estado);
+  const badge = estado === "entregado" ? "bg-green-100 text-green-800 border-green-300" : estado === "en camino" ? "bg-blue-100 text-blue-800 border-blue-300" : "bg-yellow-100 text-yellow-800 border-yellow-300";
+  const pagado = normalizarTexto(p.estadoPago) === "pagado";
+  const contra = normalizarTexto(p.metodoPago) === "contra entrega";
+  const pagoColor = pagado ? "bg-emerald-100 text-emerald-800 border-emerald-300" : contra ? "bg-red-100 text-red-800 border-red-300" : "bg-orange-100 text-orange-800 border-orange-300";
+  const pagoTexto = pagado ? `🟢 PAGADO (${escapeHtml(p.metodoPago)})` : contra ? `🔴 COBRAR ${formatearCLP(p.total)} - Contra Entrega` : `🟠 PAGO PENDIENTE - Mercado Pago`;
+  const detalles = Array.isArray(p.detalles) && p.detalles.length ? p.detalles : [{idProducto:p.idProducto,cantidad:p.cantidad,subtotal:p.total}];
+  const productosHtml = detalles.map(d => `<div class="flex justify-between gap-2 py-1 border-b border-amber-100 last:border-0"><span><strong>${escapeHtml(d.cantidad)}</strong> × ${escapeHtml(mapaProductos[d.idProducto] || d.idProducto || "Producto")}</span><strong class="whitespace-nowrap">${formatearCLP(d.subtotal)}</strong></div>`).join("");
+  const direccionCompleta = direccionMaps(p);
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccionCompleta)}`;
+  const wazeUrl = `https://waze.com/ul?q=${encodeURIComponent(direccionCompleta)}&navigate=yes`;
+  const tel = limpiarTelefono(p.telefono);
+  const ubicacionVisible = [p.direccion,p.comuna].filter(Boolean).join(", ");
+  const botonPago = !pagado && contra ? `<button type="button" onclick="marcarPagado('${escapeAttr(p.idPedido)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded-lg text-xs font-bold shadow"><i class="fa-solid fa-check-to-slot"></i> Marcar pagado</button>` : "";
 
-    function filtrarPedidos() {
-      const query = normalizarTexto(document.getElementById("input-search").value);
-      const container = document.getElementById("lista-pedidos");
-      container.innerHTML = "";
+  return `<article class="bg-white p-4 rounded-xl shadow border border-gray-200 space-y-3">
+    <div class="flex justify-between items-start gap-2"><div><span class="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">${escapeHtml(p.idPedido)}</span><h3 class="font-bold text-base mt-1">${escapeHtml(p.cliente)}</h3></div><span class="text-xs px-2.5 py-1 rounded-full border font-semibold ${badge}">${escapeHtml(p.estado)}</span></div>
+    <div class="p-2.5 rounded-lg border text-xs font-bold text-center ${pagoColor}">${pagoTexto}</div>
+    <div class="bg-amber-50 p-3 rounded-lg border border-amber-200 text-xs text-amber-950"><p class="font-bold mb-1"><i class="fa-solid fa-box text-amber-600"></i> Productos</p>${productosHtml}<div class="flex justify-between pt-2 mt-1 border-t border-amber-300 text-sm"><strong>TOTAL</strong><strong>${formatearCLP(p.total)}</strong></div></div>
+    <div class="text-xs space-y-1 text-gray-600"><p><i class="fa-solid fa-location-dot text-red-500"></i> <strong class="text-gray-800">${escapeHtml(ubicacionVisible)}</strong></p><p><i class="fa-solid fa-phone text-green-600"></i> ${escapeHtml(p.telefono || "No registrado")}</p><p><i class="fa-solid fa-wallet text-indigo-600"></i> ${escapeHtml(p.metodoPago)}</p></div>
+    <div class="grid grid-cols-2 gap-2 text-xs"><a href="${mapUrl}" target="_blank" rel="noopener" class="bg-gray-100 py-2 rounded-lg text-center font-semibold border"><i class="fa-solid fa-map-location-dot text-blue-600"></i> Google Maps</a><a href="${wazeUrl}" target="_blank" rel="noopener" class="bg-sky-50 text-sky-800 py-2 rounded-lg text-center font-semibold border border-sky-200"><i class="fa-brands fa-waze"></i> Waze</a><a href="${tel?`tel:${tel}`:"#"}" class="bg-green-50 text-green-800 py-2 rounded-lg text-center font-semibold border border-green-200"><i class="fa-solid fa-phone"></i> Llamar</a><a href="${tel?`https://wa.me/${tel}`:"#"}" target="_blank" rel="noopener" class="bg-emerald-50 text-emerald-800 py-2 rounded-lg text-center font-semibold border border-emerald-200"><i class="fa-brands fa-whatsapp"></i> WhatsApp</a></div>
+    ${botonPago?`<div>${botonPago}</div>`:""}
+    <div class="pt-2 border-t grid grid-cols-2 gap-2"><button type="button" onclick="cambiarEstado('${escapeAttr(p.idPedido)}','En Camino')" class="bg-blue-600 text-white py-2 rounded-lg text-xs font-bold">🚚 En Camino</button><button type="button" onclick="cambiarEstado('${escapeAttr(p.idPedido)}','Entregado')" class="bg-green-600 text-white py-2 rounded-lg text-xs font-bold">✅ Entregado</button></div>
+  </article>`;
+}
 
-      const filtrados = todosLosPedidos.filter(p => {
-        const estado = normalizarTexto(p.estado);
-        const coincideFiltro = filtroActual === "Todos" || estado === normalizarTexto(filtroActual);
-        const texto = normalizarTexto(`${p.cliente} ${p.direccion} ${p.idPedido} ${p.telefono}`);
-        return coincideFiltro && texto.includes(query);
-      }).slice().reverse();
+async function cambiarEstado(id,nuevoEstado) { if(!confirm(`¿Cambiar despacho ${id} a "${nuevoEstado}"?`))return; try{const r=await fetch(`${URL_APPS_SCRIPT}?action=updateStatus&idPedido=${encodeURIComponent(id)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}&t=${Date.now()}`,{redirect:"follow",cache:"no-store"});const d=await r.json();if(d.status!=="success")throw new Error(d.message||"No fue posible actualizar");await cargarPedidos();}catch(e){alert(`❌ ${e.message}`);} }
+async function marcarPagado(id) { if(!confirm(`¿Confirmas que ${id} fue pagado al repartidor?`))return; try{const r=await fetch(`${URL_APPS_SCRIPT}?action=updatePayment&idPedido=${encodeURIComponent(id)}&t=${Date.now()}`,{redirect:"follow",cache:"no-store"});const d=await r.json();if(d.status!=="success")throw new Error(d.message||"No fue posible actualizar");await cargarPedidos();}catch(e){alert(`❌ ${e.message}`);} }
 
-      if (!filtrados.length) {
-        container.innerHTML = `<p class="text-center text-sm text-gray-500 py-8">No hay pedidos que coincidan.</p>`;
-        return;
-      }
+function abrirCreadorRuta() {
+  const candidatos=todosLosPedidos.filter(p=>["pendiente","en camino"].includes(normalizarTexto(p.estado)));
+  document.getElementById("lista-ruta").innerHTML=candidatos.length?candidatos.map(p=>`<label class="flex gap-3 p-3 border rounded-xl bg-gray-50"><input type="checkbox" class="pedido-ruta mt-1" value="${escapeAttr(p.idPedido)}" checked><span class="text-xs"><strong>${escapeHtml(p.cliente)}</strong><br>${escapeHtml([p.direccion,p.comuna].filter(Boolean).join(", "))}<br><span class="text-gray-500">${escapeHtml(p.idPedido)} · ${formatearCLP(p.total)}</span></span></label>`).join(""):`<p class="text-sm text-gray-500 text-center py-6">No hay pedidos Pendientes o En Camino.</p>`;
+  const m=document.getElementById("modal-ruta");m.classList.remove("hidden");m.classList.add("flex");
+}
+function cerrarCreadorRuta(){const m=document.getElementById("modal-ruta");m.classList.add("hidden");m.classList.remove("flex");}
+function seleccionarTodosRuta(v){document.querySelectorAll(".pedido-ruta").forEach(x=>x.checked=v);}
+function generarRutaGoogleMaps(){const ids=[...document.querySelectorAll(".pedido-ruta:checked")].map(x=>x.value);if(!ids.length)return alert("Selecciona al menos un pedido.");const sel=ids.map(id=>todosLosPedidos.find(p=>p.idPedido===id)).filter(Boolean);sel.sort((a,b)=>normalizarTexto(direccionMaps(a)).localeCompare(normalizarTexto(direccionMaps(b))));const origen=document.getElementById("origen-ruta").value.trim();if(!origen)return alert("Indica el punto de partida.");const destino=direccionMaps(sel[sel.length-1]);const inter=sel.slice(0,-1).map(direccionMaps);const u=new URL("https://www.google.com/maps/dir/");u.searchParams.set("api","1");u.searchParams.set("origin",origen);u.searchParams.set("destination",destino);u.searchParams.set("travelmode","driving");if(inter.length)u.searchParams.set("waypoints",inter.join("|"));window.open(u.toString(),"_blank","noopener");}
 
-      filtrados.forEach(p => container.insertAdjacentHTML("beforeend", tarjetaPedido(p)));
-    }
-
-    function tarjetaPedido(p) {
-      const estado = normalizarTexto(p.estado);
-      const badgeColor = estado === "entregado"
-        ? "bg-green-100 text-green-800 border-green-300"
-        : estado === "en camino"
-          ? "bg-blue-100 text-blue-800 border-blue-300"
-          : "bg-yellow-100 text-yellow-800 border-yellow-300";
-
-      const pagado = normalizarTexto(p.estadoPago) === "pagado";
-      const contraEntrega = normalizarTexto(p.metodoPago) === "contra entrega";
-      const pagoColor = pagado
-        ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-        : contraEntrega
-          ? "bg-red-100 text-red-800 border-red-300"
-          : "bg-orange-100 text-orange-800 border-orange-300";
-
-      const pagoTexto = pagado
-        ? `🟢 PAGADO (${escapeHtml(p.metodoPago)})`
-        : contraEntrega
-          ? `🔴 COBRAR ${formatearCLP(p.total)} - Contra Entrega`
-          : `🟠 PAGO PENDIENTE - Mercado Pago`;
-
-      const detalles = Array.isArray(p.detalles) && p.detalles.length
-        ? p.detalles
-        : [{ idProducto: p.idProducto, cantidad: p.cantidad, subtotal: p.total }];
-
-      const detalleHtml = detalles.map(d => {
-        const nombre = mapaProductos[d.idProducto] || d.idProducto || "Producto";
-        return `
-          <div class="flex justify-between gap-2 py-1 border-b border-amber-100 last:border-0">
-            <span><strong>${escapeHtml(d.cantidad)}</strong> × ${escapeHtml(nombre)}</span>
-            <strong class="whitespace-nowrap">${formatearCLP(d.subtotal)}</strong>
-          </div>`;
-      }).join("");
-
-      const direccionCompleta = `${p.direccion || ""}, Chile`;
-      const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccionCompleta)}`;
-      const wazeUrl = `https://waze.com/ul?q=${encodeURIComponent(direccionCompleta)}&navigate=yes`;
-      const tel = String(p.telefono || "").replace(/[^0-9]/g, "");
-      const pagoButton = !pagado && contraEntrega
-        ? `<button type="button" onclick="marcarPagado('${escapeAttr(p.idPedido)}')" class="bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded-lg text-xs font-bold shadow"><i class="fa-solid fa-check-to-slot"></i> Marcar pagado</button>`
-        : "";
-
-      return `
-        <article class="bg-white p-4 rounded-xl shadow border border-gray-200 space-y-3">
-          <div class="flex justify-between items-start gap-2">
-            <div class="min-w-0">
-              <span class="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 break-all">${escapeHtml(p.idPedido)}</span>
-              <h3 class="font-bold text-base text-gray-900 mt-1">${escapeHtml(p.cliente)}</h3>
-            </div>
-            <span class="text-xs px-2.5 py-1 rounded-full border font-semibold whitespace-nowrap ${badgeColor}">${escapeHtml(p.estado)}</span>
-          </div>
-
-          <div class="p-2.5 rounded-lg border text-xs font-bold text-center ${pagoColor}">${pagoTexto}</div>
-
-          <div class="bg-amber-50 p-3 rounded-lg border border-amber-200 text-xs text-amber-950">
-            <p class="font-bold mb-1"><i class="fa-solid fa-box text-amber-600"></i> Productos</p>
-            ${detalleHtml}
-            <div class="flex justify-between pt-2 mt-1 border-t border-amber-300 text-sm">
-              <strong>TOTAL</strong><strong>${formatearCLP(p.total)}</strong>
-            </div>
-          </div>
-
-          <div class="text-xs space-y-1 text-gray-600">
-            <p><i class="fa-solid fa-location-dot text-red-500"></i> <strong class="text-gray-800">${escapeHtml(p.direccion)}</strong></p>
-            <p><i class="fa-solid fa-phone text-green-600"></i> ${escapeHtml(p.telefono || "No registrado")}</p>
-            <p><i class="fa-solid fa-wallet text-indigo-600"></i> ${escapeHtml(p.metodoPago)}</p>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 text-xs">
-            <a href="${mapUrl}" target="_blank" class="bg-gray-100 text-gray-800 py-2 rounded-lg text-center font-semibold border"><i class="fa-solid fa-map-location-dot text-blue-600"></i> Google Maps</a>
-            <a href="${wazeUrl}" target="_blank" class="bg-sky-50 text-sky-800 py-2 rounded-lg text-center font-semibold border border-sky-200"><i class="fa-brands fa-waze text-sky-500"></i> Waze</a>
-            <a href="${tel ? `tel:${tel}` : "#"}" class="bg-green-50 text-green-800 py-2 rounded-lg text-center font-semibold border border-green-200"><i class="fa-solid fa-phone"></i> Llamar</a>
-            <a href="${tel ? `https://wa.me/${tel}` : "#"}" target="_blank" class="bg-emerald-50 text-emerald-800 py-2 rounded-lg text-center font-semibold border border-emerald-200"><i class="fa-brands fa-whatsapp"></i> WhatsApp</a>
-          </div>
-
-          ${pagoButton ? `<div>${pagoButton}</div>` : ""}
-
-          <div class="pt-2 border-t grid grid-cols-2 gap-2">
-            <button type="button" onclick="cambiarEstado('${escapeAttr(p.idPedido)}','En Camino')" class="bg-blue-600 text-white py-2 rounded-lg text-xs font-bold shadow">🚚 En Camino</button>
-            <button type="button" onclick="cambiarEstado('${escapeAttr(p.idPedido)}','Entregado')" class="bg-green-600 text-white py-2 rounded-lg text-xs font-bold shadow">✅ Entregado</button>
-          </div>
-        </article>`;
-    }
-
-    async function cambiarEstado(idPedido, nuevoEstado) {
-      if (!confirm(`¿Cambiar despacho ${idPedido} a "${nuevoEstado}"?`)) return;
-      try {
-        const url = `${URL_APPS_SCRIPT}?action=updateStatus&idPedido=${encodeURIComponent(idPedido)}&nuevoEstado=${encodeURIComponent(nuevoEstado)}&t=${Date.now()}`;
-        const respuesta = await fetch(url, { redirect: "follow" });
-        const data = await respuesta.json();
-        if (data.status !== "success") throw new Error(data.message || "No fue posible actualizar");
-        await cargarPedidos();
-      } catch (error) {
-        alert(`❌ ${error.message}`);
-      }
-    }
-
-    async function marcarPagado(idPedido) {
-      if (!confirm(`¿Confirmas que ${idPedido} fue pagado al repartidor?`)) return;
-      try {
-        const url = `${URL_APPS_SCRIPT}?action=updatePayment&idPedido=${encodeURIComponent(idPedido)}&t=${Date.now()}`;
-        const respuesta = await fetch(url, { redirect: "follow" });
-        const data = await respuesta.json();
-        if (data.status !== "success") throw new Error(data.message || "No fue posible actualizar el pago");
-        await cargarPedidos();
-      } catch (error) {
-        alert(`❌ ${error.message}`);
-      }
-    }
-
-    function abrirCreadorRuta() {
-      const candidatos = todosLosPedidos.filter(p => ["pendiente", "en camino"].includes(normalizarTexto(p.estado)));
-      const lista = document.getElementById("lista-ruta");
-      lista.innerHTML = candidatos.length
-        ? candidatos.map(p => `
-            <label class="flex gap-3 items-start p-3 border rounded-xl bg-gray-50">
-              <input type="checkbox" class="pedido-ruta mt-1" value="${escapeAttr(p.idPedido)}" checked>
-              <span class="text-xs">
-                <strong>${escapeHtml(p.cliente)}</strong><br>
-                ${escapeHtml(p.direccion)}<br>
-                <span class="text-gray-500">${escapeHtml(p.idPedido)} · ${formatearCLP(p.total)}</span>
-              </span>
-            </label>`).join("")
-        : `<p class="text-sm text-gray-500 text-center py-6">No hay pedidos Pendientes o En Camino.</p>`;
-
-      const modal = document.getElementById("modal-ruta");
-      modal.classList.remove("hidden");
-      modal.classList.add("flex");
-    }
-
-    function cerrarCreadorRuta() {
-      const modal = document.getElementById("modal-ruta");
-      modal.classList.add("hidden");
-      modal.classList.remove("flex");
-    }
-
-    function seleccionarTodosRuta(valor) {
-      document.querySelectorAll(".pedido-ruta").forEach(x => x.checked = valor);
-    }
-
-    function generarRutaGoogleMaps() {
-      const ids = [...document.querySelectorAll(".pedido-ruta:checked")].map(x => x.value);
-      if (!ids.length) return alert("Selecciona al menos un pedido.");
-
-      const seleccionados = ids.map(id => todosLosPedidos.find(p => p.idPedido === id)).filter(Boolean);
-      seleccionados.sort((a, b) => normalizarTexto(a.direccion).localeCompare(normalizarTexto(b.direccion)));
-
-      const origen = document.getElementById("origen-ruta").value.trim();
-      if (!origen) return alert("Indica el punto de partida.");
-
-      const destino = `${seleccionados[seleccionados.length - 1].direccion}, Chile`;
-      const intermedios = seleccionados.slice(0, -1).map(p => `${p.direccion}, Chile`);
-      const url = new URL("https://www.google.com/maps/dir/");
-      url.searchParams.set("api", "1");
-      url.searchParams.set("origin", origen);
-      url.searchParams.set("destination", destino);
-      url.searchParams.set("travelmode", "driving");
-      if (intermedios.length) url.searchParams.set("waypoints", intermedios.join("|"));
-
-      window.open(url.toString(), "_blank", "noopener");
-    }
-
-    function escapeHtml(valor) {
-      return String(valor ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-    }
-
-    function escapeAttr(valor) {
-      return escapeHtml(valor).replace(/`/g, "&#096;");
-    }
-
-    window.onload = cargarPedidos;
-  </script>
+function escapeHtml(v){return String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}
+function escapeAttr(v){return escapeHtml(v).replace(/`/g,"&#096;");}
+window.onload=cargarPedidos;
+</script>
 </body>
 </html>
