@@ -15,7 +15,7 @@ import path from "path";
 dotenv.config();
 
 /* =========================================================
-   CONFIGURACIÓN GENERAL
+   CONFIGURACIÃ“N GENERAL
 ========================================================= */
 
 const URL_APPS_SCRIPT = process.env.URL_APPS_SCRIPT;
@@ -42,14 +42,14 @@ if (!GEMINI_API_KEY) {
 
 if (!URL_APPS_SCRIPT) {
     console.warn(
-        "[Configuración] No se encontró URL_APPS_SCRIPT."
+        "[ConfiguraciÃ³n] No se encontrÃ³ URL_APPS_SCRIPT."
     );
 }
 
 if (!MP_ACCESS_TOKEN) {
     console.warn(
-        "[Configuración] No se encontró MP_ACCESS_TOKEN. " +
-        "El bot funcionará sin generar links de pago."
+        "[ConfiguraciÃ³n] No se encontrÃ³ MP_ACCESS_TOKEN. " +
+        "El bot funcionarÃ¡ sin generar links de pago."
     );
 }
 
@@ -204,7 +204,7 @@ function eliminarPedidoActual(
 cargarMemoria();
 
 /* =========================================================
-   FUNCIONES DE NORMALIZACIÓN
+   FUNCIONES DE NORMALIZACIÃ“N
 ========================================================= */
 
 function normalizarTexto(valor = "") {
@@ -296,7 +296,7 @@ function extraerNumeroWhatsApp(msg) {
     ].filter(Boolean);
 
     /*
-     * Primero buscamos explícitamente un JID de número telefónico.
+     * Primero buscamos explÃ­citamente un JID de nÃºmero telefÃ³nico.
      */
     for (const candidato of candidatos) {
         const jid = String(candidato);
@@ -349,7 +349,7 @@ function esRespuestaPositiva(texto) {
 
     const respuestas = [
         "si",
-        "sí",
+        "sÃ­",
         "confirmo",
         "confirmar",
         "correcto",
@@ -474,7 +474,7 @@ async function obtenerDatosSheets() {
 
         if (!response.ok) {
             throw new Error(
-                `Google Sheets respondió HTTP ${response.status}`
+                `Google Sheets respondiÃ³ HTTP ${response.status}`
             );
         }
 
@@ -483,7 +483,7 @@ async function obtenerDatosSheets() {
 
         /*
          * Compatibilidad con la estructura actual del Apps Script:
-         * data.stock contiene actualmente el catálogo.
+         * data.stock contiene actualmente el catÃ¡logo.
          */
         const productos =
             data.productos ||
@@ -514,7 +514,7 @@ async function obtenerDatosSheets() {
 async function guardarPedidoEnSheets(pedidoData) {
     if (!URL_APPS_SCRIPT) {
         throw new Error(
-            "No se configuró URL_APPS_SCRIPT."
+            "No se configurÃ³ URL_APPS_SCRIPT."
         );
     }
 
@@ -531,7 +531,7 @@ async function guardarPedidoEnSheets(pedidoData) {
 
     if (!response.ok) {
         throw new Error(
-            `Sheets respondió HTTP ${response.status}: ` +
+            `Sheets respondiÃ³ HTTP ${response.status}: ` +
             textoRespuesta
         );
     }
@@ -542,7 +542,7 @@ async function guardarPedidoEnSheets(pedidoData) {
         resultado = JSON.parse(textoRespuesta);
     } catch {
         throw new Error(
-            `Sheets entregó una respuesta inválida: ` +
+            `Sheets entregÃ³ una respuesta invÃ¡lida: ` +
             textoRespuesta
         );
     }
@@ -562,7 +562,7 @@ async function guardarPedidoEnSheets(pedidoData) {
 }
 
 /* =========================================================
-   CLIENTES Y TELÉFONOS
+   CLIENTES Y TELÃ‰FONOS
 ========================================================= */
 
 function buscarClienteEnSheets(clientesMap, telefono) {
@@ -643,7 +643,7 @@ function asignarZonaCliente(estado, despachos) {
 }
 
 /* =========================================================
-   CATÁLOGO Y PRECIOS
+   CATÃLOGO Y PRECIOS
 ========================================================= */
 
 function obtenerPrecioProducto(producto, zona) {
@@ -741,13 +741,13 @@ function construirCatalogoTexto(
 
             return [
                 `ID: ${producto.id}`,
-                `Categoría: ${producto.categoria}`,
-                `Descripción: ${producto.descripcion || ""}`,
+                `CategorÃ­a: ${producto.categoria}`,
+                `DescripciÃ³n: ${producto.descripcion || ""}`,
                 `Gramaje: ${producto.gramaje || ""}`,
                 `Formato: ${producto.formato}`,
                 `Precio: ${formatearCLP(precio)}`,
                 `Stock: ${stock}`,
-                `Disponible: ${disponible ? "Sí" : "No"}`
+                `Disponible: ${disponible ? "SÃ­" : "No"}`
             ].join(" | ");
         })
         .join("\n");
@@ -912,27 +912,27 @@ Analiza el siguiente mensaje de un cliente de una tienda de huevos:
 
 "${mensaje}"
 
-Extrae únicamente la información que el cliente escribió.
+Extrae Ãºnicamente la informaciÃ³n que el cliente escribiÃ³.
 
 Debes identificar:
 - nombre
 - comuna
-- dirección
+- direcciÃ³n
 
 Las comunas conocidas incluyen:
 ${comunas}
 
 Reglas:
-1. No inventes información.
+1. No inventes informaciÃ³n.
 2. Si falta un dato, usa null.
-3. Una dirección puede incluir calle, avenida, pasaje, parcela o camino y un número.
-4. No incluyas la comuna dentro de la dirección.
-5. "San Bernardo", "Las Condes", "Maipú" y "Linares" son comunas.
+3. Una direcciÃ³n puede incluir calle, avenida, pasaje, parcela o camino y un nÃºmero.
+4. No incluyas la comuna dentro de la direcciÃ³n.
+5. "San Bernardo", "Las Condes", "MaipÃº" y "Linares" son comunas.
 6. Si el mensaje dice "Pablo, Ancud 0103, San Bernardo":
    - nombre es Pablo
-   - dirección es Ancud 0103
+   - direcciÃ³n es Ancud 0103
    - comuna es San Bernardo
-7. Responde únicamente JSON válido, sin markdown.
+7. Responde Ãºnicamente JSON vÃ¡lido, sin markdown.
 
 Formato exacto:
 {
@@ -961,8 +961,8 @@ async function interpretarPedido(
     zona
 ) {
     /*
-     * Primero intentamos una identificación local.
-     * Gemini se utiliza para lenguaje más libre.
+     * Primero intentamos una identificaciÃ³n local.
+     * Gemini se utiliza para lenguaje mÃ¡s libre.
      */
     const productoLocal =
         buscarProductoLocalmente(
@@ -1000,10 +1000,10 @@ Eres un clasificador de mensajes para Huevos Santa Estela.
 Mensaje del cliente:
 "${mensaje}"
 
-Catálogo oficial:
+CatÃ¡logo oficial:
 ${catalogoTexto}
 
-Determina la intención del mensaje.
+Determina la intenciÃ³n del mensaje.
 
 Tipos posibles:
 - pedido
@@ -1015,16 +1015,16 @@ Tipos posibles:
 - modificar_datos
 
 Reglas:
-1. Considera errores ortográficos comunes.
+1. Considera errores ortogrÃ¡ficos comunes.
 2. "junbo", "jumvo" o "jubo" pueden significar "jumbo".
 3. No inventes IDs.
-4. Solo usa un ID presente en el catálogo.
+4. Solo usa un ID presente en el catÃ¡logo.
 5. Si el cliente pregunta precios, no es un pedido.
 6. Si dice "quiero saber", normalmente es consulta.
 7. Si solicita una cantidad concreta y un producto concreto, es pedido.
-8. Si hay producto pero no cantidad, requiere aclaración.
-9. Si hay cantidad pero no producto, requiere aclaración.
-10. Devuelve únicamente JSON válido, sin markdown.
+8. Si hay producto pero no cantidad, requiere aclaraciÃ³n.
+9. Si hay cantidad pero no producto, requiere aclaraciÃ³n.
+10. Devuelve Ãºnicamente JSON vÃ¡lido, sin markdown.
 
 Formato exacto:
 {
@@ -1083,13 +1083,13 @@ Eres el asistente virtual de "Huevos Santa Estela".
 Datos confirmados del cliente:
 - Nombre: ${estado.nombre || "No registrado"}
 - Comuna: ${estado.comuna || "No registrada"}
-- Dirección: ${estado.direccion || "No registrada"}
+- DirecciÃ³n: ${estado.direccion || "No registrada"}
 - Zona: ${estado.zona || "Pendiente de validar"}
 
-Catálogo oficial para la zona:
+CatÃ¡logo oficial para la zona:
 ${catalogoTexto}
 
-Configuración:
+ConfiguraciÃ³n:
 ${JSON.stringify(configuracion || {})}
 
 Preguntas frecuentes oficiales:
@@ -1099,10 +1099,10 @@ Mensaje del cliente:
 "${mensaje}"
 
 Instrucciones:
-1. Responde en español chileno, de forma breve, clara y amable.
-2. No vuelvas a pedir nombre, comuna o dirección si ya aparecen confirmados.
+1. Responde en espaÃ±ol chileno, de forma breve, clara y amable.
+2. No vuelvas a pedir nombre, comuna o direcciÃ³n si ya aparecen confirmados.
 3. No inventes precios, stock, zonas, horarios ni condiciones.
-4. Si el cliente pregunta por productos, utiliza exclusivamente el catálogo.
+4. Si el cliente pregunta por productos, utiliza exclusivamente el catÃ¡logo.
 5. No confirmes una compra ni digas que fue registrada.
 6. No generes enlaces de pago.
 7. Si faltan datos oficiales, indica que deben validarse.
@@ -1217,7 +1217,7 @@ function construirMensajeCatalogo(
             );
 
             return (
-                `• *${producto.categoria}* ` +
+                `â€¢ *${producto.categoria}* ` +
                 `(${producto.formato}): ` +
                 `${formatearCLP(precio)}`
             );
@@ -1225,19 +1225,19 @@ function construirMensajeCatalogo(
     );
 
     return [
-        `¡Hola, ${estado.nombre}! 🥚`,
+        `Â¡Hola, ${estado.nombre}! ðŸ¥š`,
         "",
-        `Encontré tus datos registrados:`,
-        `📍 ${estado.direccion || "Dirección por confirmar"}, ` +
+        `EncontrÃ© tus datos registrados:`,
+        `ðŸ“ ${estado.direccion || "DirecciÃ³n por confirmar"}, ` +
         `${estado.comuna}`,
-        `🚚 ${estado.zona}`,
+        `ðŸšš ${estado.zona}`,
         "",
         "Productos disponibles para tu zona:",
         "",
         ...lineas,
         "",
         "Puedes escribir, por ejemplo:",
-        '“1 bandeja Jumbo” o “2 bandejas Extra”.'
+        'â€œ1 bandeja Jumboâ€ o â€œ2 bandejas Extraâ€.'
     ].join("\n");
 }
 
@@ -1250,21 +1250,21 @@ function construirResumenPedido(
     const total = precioUnitario * cantidad;
 
     return [
-        `Perfecto, ${estado.nombre} 🥚`,
+        `Perfecto, ${estado.nombre} ðŸ¥š`,
         "",
         "*Resumen del pedido:*",
-        `• Producto: ${producto.categoria}`,
-        `• Formato: ${producto.formato}`,
-        `• Cantidad: ${cantidad}`,
-        `• Precio unitario: ${formatearCLP(precioUnitario)}`,
-        `• Dirección: ${estado.direccion || "Por confirmar"}`,
-        `• Comuna: ${estado.comuna}`,
-        `• Zona: ${estado.zona}`,
+        `â€¢ Producto: ${producto.categoria}`,
+        `â€¢ Formato: ${producto.formato}`,
+        `â€¢ Cantidad: ${cantidad}`,
+        `â€¢ Precio unitario: ${formatearCLP(precioUnitario)}`,
+        `â€¢ DirecciÃ³n: ${estado.direccion || "Por confirmar"}`,
+        `â€¢ Comuna: ${estado.comuna}`,
+        `â€¢ Zona: ${estado.zona}`,
         "",
         `*Total: ${formatearCLP(total)}*`,
         "",
-        "¿Confirmas el pedido?",
-        "Responde *Sí* para generar el link de pago o " +
+        "Â¿Confirmas el pedido?",
+        "Responde *SÃ­* para generar el link de pago o " +
         "*No* para cancelarlo."
     ].join("\n");
 }
@@ -1287,7 +1287,7 @@ async function cargarOCrearEstadoCliente({
 
     if (estado) {
         /*
-         * Completamos el teléfono si antes se guardó solamente por JID.
+         * Completamos el telÃ©fono si antes se guardÃ³ solamente por JID.
          */
         if (!estado.telefono && telefono) {
             estado.telefono = telefono;
@@ -1339,7 +1339,7 @@ async function cargarOCrearEstadoCliente({
         );
 
         /*
-         * Si Excel tenía cliente, pero no comuna reconocida,
+         * Si Excel tenÃ­a cliente, pero no comuna reconocida,
          * se solicita corregirla.
          */
         if (!estado.comuna) {
@@ -1421,8 +1421,8 @@ async function procesarRegistroCliente({
             await sock.sendMessage(currentJid, {
                 text:
                     "No pude identificar esa comuna en nuestra " +
-                    "base de despachos. Escríbela nuevamente, " +
-                    "por ejemplo: San Bernardo, Maipú o Linares."
+                    "base de despachos. EscrÃ­bela nuevamente, " +
+                    "por ejemplo: San Bernardo, MaipÃº o Linares."
             });
 
             return false;
@@ -1446,7 +1446,7 @@ async function procesarRegistroCliente({
             await sock.sendMessage(currentJid, {
                 text:
                     `Gracias, ${estado.nombre || ""}. ` +
-                    "¿Cuál es la dirección de entrega?"
+                    "Â¿CuÃ¡l es la direcciÃ³n de entrega?"
             });
 
             return false;
@@ -1469,8 +1469,8 @@ async function procesarRegistroCliente({
         if (direccion.length < 4) {
             await sock.sendMessage(currentJid, {
                 text:
-                    "La dirección parece incompleta. " +
-                    "Indícame calle y numeración, por ejemplo: " +
+                    "La direcciÃ³n parece incompleta. " +
+                    "IndÃ­came calle y numeraciÃ³n, por ejemplo: " +
                     "Ancud 0103."
             });
 
@@ -1509,7 +1509,7 @@ async function procesarRegistroCliente({
         await sock.sendMessage(currentJid, {
             text:
                 "No pude interpretar todos los datos. " +
-                "Escríbeme tu nombre, dirección y comuna, " +
+                "EscrÃ­beme tu nombre, direcciÃ³n y comuna, " +
                 "por ejemplo:\n\n" +
                 "*Pablo, Ancud 0103, San Bernardo*"
         });
@@ -1556,9 +1556,9 @@ async function procesarRegistroCliente({
 
         await sock.sendMessage(currentJid, {
             text:
-                "¡Hola! Qué gusto saludarte en " +
-                "*Huevos Santa Estela* 🥚\n\n" +
-                "¿Podrías indicarme tu *nombre*?"
+                "Â¡Hola! QuÃ© gusto saludarte en " +
+                "*Huevos Santa Estela* ðŸ¥š\n\n" +
+                "Â¿PodrÃ­as indicarme tu *nombre*?"
         });
 
         return false;
@@ -1576,7 +1576,7 @@ async function procesarRegistroCliente({
         await sock.sendMessage(currentJid, {
             text:
                 `Mucho gusto, ${estado.nombre}. ` +
-                "¿De qué *comuna* nos escribes?"
+                "Â¿De quÃ© *comuna* nos escribes?"
         });
 
         return false;
@@ -1594,7 +1594,7 @@ async function procesarRegistroCliente({
         await sock.sendMessage(currentJid, {
             text:
                 `Gracias, ${estado.nombre}. ` +
-                "¿Cuál es la *dirección de entrega*?"
+                "Â¿CuÃ¡l es la *direcciÃ³n de entrega*?"
         });
 
         return false;
@@ -1612,7 +1612,7 @@ async function procesarRegistroCliente({
 }
 
 /* =========================================================
-   CONFIRMACIÓN Y CREACIÓN DEL PEDIDO
+   CONFIRMACIÃ“N Y CREACIÃ“N DEL PEDIDO
 ========================================================= */
 
 async function confirmarYCrearPedido({
@@ -1635,8 +1635,8 @@ async function confirmarYCrearPedido({
 
         await sock.sendMessage(currentJid, {
             text:
-                "No encontré un pedido pendiente. " +
-                "Indícame el producto y la cantidad."
+                "No encontrÃ© un pedido pendiente. " +
+                "IndÃ­came el producto y la cantidad."
         });
 
         return;
@@ -1656,8 +1656,8 @@ async function confirmarYCrearPedido({
 
         await sock.sendMessage(currentJid, {
             text:
-                "El producto ya no está disponible. " +
-                "Indícame qué producto deseas pedir."
+                "El producto ya no estÃ¡ disponible. " +
+                "IndÃ­came quÃ© producto deseas pedir."
         });
 
         return;
@@ -1678,7 +1678,7 @@ async function confirmarYCrearPedido({
             text:
                 `Solo tenemos ${stockActual} unidad(es) ` +
                 `disponibles de ${producto.categoria}. ` +
-                "Indícame una nueva cantidad."
+                "IndÃ­came una nueva cantidad."
         });
 
         return;
@@ -1759,7 +1759,7 @@ async function confirmarYCrearPedido({
                 ? "Mercado Pago"
                 : "Por confirmar",
             estadoPago: "Pendiente",
-            estado: "Esperando pago",
+            estado: "Pendiente",
             comuna: estado.comuna,
             zona: estado.zona,
             direccion:
@@ -1793,9 +1793,9 @@ async function confirmarYCrearPedido({
         );
 
         const respuesta = [
-            `¡Pedido creado correctamente, ${estado.nombre}! 🥚`,
+            `Â¡Pedido creado correctamente, ${estado.nombre}! ðŸ¥š`,
             "",
-            `Número de pedido: *${idPedido}*`,
+            `NÃºmero de pedido: *${idPedido}*`,
             `Producto: ${producto.categoria}`,
             `Cantidad: ${pedido.cantidad}`,
             `Total: *${formatearCLP(pedido.total)}*`
@@ -1804,18 +1804,18 @@ async function confirmarYCrearPedido({
         if (pago.linkPago) {
             respuesta.push(
                 "",
-                "🔗 *Link de pago seguro:*",
+                "ðŸ”— *Link de pago seguro:*",
                 pago.linkPago,
                 "",
-                "Tu pedido quedará confirmado cuando " +
+                "Tu pedido quedarÃ¡ confirmado cuando " +
                 "Mercado Pago apruebe el pago."
             );
         } else {
             respuesta.push(
                 "",
                 "No fue posible generar el link de pago " +
-                "automáticamente. El pedido quedó registrado " +
-                "para revisión."
+                "automÃ¡ticamente. El pedido quedÃ³ registrado " +
+                "para revisiÃ³n."
             );
         }
 
@@ -1840,7 +1840,7 @@ async function confirmarYCrearPedido({
         await sock.sendMessage(currentJid, {
             text:
                 "No fue posible crear el pedido o el link " +
-                "de pago en este momento. Tu selección se " +
+                "de pago en este momento. Tu selecciÃ³n se " +
                 "mantiene guardada. Intenta confirmar nuevamente."
         });
     }
@@ -1880,7 +1880,7 @@ async function procesarMensaje(sock, msg) {
 
     if (conversacionesProcesando.has(currentJid)) {
         console.warn(
-            `[Conversación] Mensaje omitido temporalmente: ` +
+            `[ConversaciÃ³n] Mensaje omitido temporalmente: ` +
             currentJid
         );
 
@@ -1900,7 +1900,7 @@ async function procesarMensaje(sock, msg) {
             extraerNumeroWhatsApp(msg);
 
         console.log(
-            "========== DIAGNÓSTICO CLIENTE =========="
+            "========== DIAGNÃ“STICO CLIENTE =========="
         );
 
         console.log({
@@ -1938,7 +1938,7 @@ async function procesarMensaje(sock, msg) {
         if (!catalogo.length) {
             await sock.sendMessage(currentJid, {
                 text:
-                    "No puedo consultar el catálogo en este " +
+                    "No puedo consultar el catÃ¡logo en este " +
                     "momento. Por favor, intenta nuevamente " +
                     "en unos minutos."
             });
@@ -1948,13 +1948,13 @@ async function procesarMensaje(sock, msg) {
 
         /*
          * Si WhatsApp entrega solamente @lid, se mantiene la
-         * conversación por JID. La búsqueda por teléfono se hará
+         * conversaciÃ³n por JID. La bÃºsqueda por telÃ©fono se harÃ¡
          * cuando Baileys entregue remoteJidAlt o senderPn.
          */
         if (!telefono) {
             console.warn(
-                "[Identificación] No se encontró teléfono real. " +
-                "Se utilizará el JID para conservar la conversación."
+                "[IdentificaciÃ³n] No se encontrÃ³ telÃ©fono real. " +
+                "Se utilizarÃ¡ el JID para conservar la conversaciÃ³n."
             );
         }
 
@@ -1990,7 +1990,7 @@ async function procesarMensaje(sock, msg) {
 
                 await sock.sendMessage(currentJid, {
                     text:
-                        "Perfecto. Indícame el producto y " +
+                        "Perfecto. IndÃ­came el producto y " +
                         "la cantidad del nuevo pedido."
                 });
 
@@ -2010,7 +2010,7 @@ async function procesarMensaje(sock, msg) {
                     )}*`,
                     link
                         ? `Link de pago: ${link}`
-                        : "El link de pago está pendiente de revisión.",
+                        : "El link de pago estÃ¡ pendiente de revisiÃ³n.",
                     "",
                     "Si necesitas otro pedido, escribe " +
                     "*nuevo pedido*."
@@ -2025,7 +2025,7 @@ async function procesarMensaje(sock, msg) {
         ) {
             await sock.sendMessage(currentJid, {
                 text:
-                    "Tu pedido se está generando. " +
+                    "Tu pedido se estÃ¡ generando. " +
                     "Espera unos segundos antes de enviar " +
                     "otro mensaje."
             });
@@ -2058,8 +2058,8 @@ async function procesarMensaje(sock, msg) {
 
                 await sock.sendMessage(currentJid, {
                     text:
-                        "Pedido cancelado. No se generó ningún " +
-                        "cobro. Indícame qué producto deseas."
+                        "Pedido cancelado. No se generÃ³ ningÃºn " +
+                        "cobro. IndÃ­came quÃ© producto deseas."
                 });
 
                 return;
@@ -2068,7 +2068,7 @@ async function procesarMensaje(sock, msg) {
             await sock.sendMessage(currentJid, {
                 text:
                     "Necesito confirmar tu pedido. " +
-                    "Responde *Sí* para continuar o *No* " +
+                    "Responde *SÃ­* para continuar o *No* " +
                     "para cancelarlo."
             });
 
@@ -2121,7 +2121,7 @@ async function procesarMensaje(sock, msg) {
             await sock.sendMessage(currentJid, {
                 text:
                     "No pude validar tu comuna en nuestra " +
-                    "base de despachos. Escríbeme nuevamente " +
+                    "base de despachos. EscrÃ­beme nuevamente " +
                     "tu comuna."
             });
 
@@ -2146,7 +2146,7 @@ async function procesarMensaje(sock, msg) {
 
             await sock.sendMessage(currentJid, {
                 text:
-                    "No tienes un pedido en confirmación. " +
+                    "No tienes un pedido en confirmaciÃ³n. " +
                     "Puedes comenzar uno indicando producto " +
                     "y cantidad."
             });
@@ -2173,8 +2173,8 @@ async function procesarMensaje(sock, msg) {
 
             await sock.sendMessage(currentJid, {
                 text:
-                    "Perfecto. Envíame nuevamente tu " +
-                    "nombre, dirección y comuna.\n\n" +
+                    "Perfecto. EnvÃ­ame nuevamente tu " +
+                    "nombre, direcciÃ³n y comuna.\n\n" +
                     "Ejemplo: *Pablo, Ancud 0103, " +
                     "San Bernardo*"
             });
@@ -2188,7 +2188,7 @@ async function procesarMensaje(sock, msg) {
             await sock.sendMessage(currentJid, {
                 text:
                     interpretacion.aclaracion ||
-                    "Indícame el producto y la cantidad. " +
+                    "IndÃ­came el producto y la cantidad. " +
                     "Por ejemplo: *1 bandeja Jumbo*."
             });
 
@@ -2210,7 +2210,7 @@ async function procesarMensaje(sock, msg) {
                 await sock.sendMessage(currentJid, {
                     text:
                         "No pude identificar ese producto en " +
-                        "el catálogo. Indícame si deseas Jumbo, " +
+                        "el catÃ¡logo. IndÃ­came si deseas Jumbo, " +
                         "Extra, Primera, Segunda o Tercera."
                 });
 
@@ -2228,7 +2228,7 @@ async function procesarMensaje(sock, msg) {
             ) {
                 await sock.sendMessage(currentJid, {
                     text:
-                        `Indícame una cantidad válida entre ` +
+                        `IndÃ­came una cantidad vÃ¡lida entre ` +
                         `1 y ${MAX_CANTIDAD_PEDIDO}.`
                 });
 
@@ -2243,7 +2243,7 @@ async function procesarMensaje(sock, msg) {
             ) {
                 await sock.sendMessage(currentJid, {
                     text:
-                        `${producto.categoria} no está disponible ` +
+                        `${producto.categoria} no estÃ¡ disponible ` +
                         `actualmente para ${estado.zona}. ` +
                         "Puedo ayudarte a elegir otro producto."
                 });
@@ -2260,7 +2260,7 @@ async function procesarMensaje(sock, msg) {
                     text:
                         `Tenemos ${stockActual} unidad(es) ` +
                         `disponibles de ${producto.categoria}. ` +
-                        "Indícame una cantidad menor."
+                        "IndÃ­came una cantidad menor."
                 });
 
                 return;
@@ -2278,7 +2278,7 @@ async function procesarMensaje(sock, msg) {
             ) {
                 await sock.sendMessage(currentJid, {
                     text:
-                        "El producto no tiene un precio válido " +
+                        "El producto no tiene un precio vÃ¡lido " +
                         "para tu zona. El pedido debe revisarse " +
                         "manualmente."
                 });
@@ -2336,7 +2336,7 @@ async function procesarMensaje(sock, msg) {
         });
     } catch (error) {
         console.error(
-            "[Mensaje] Error crítico:",
+            "[Mensaje] Error crÃ­tico:",
             error
         );
 
@@ -2408,13 +2408,13 @@ async function startBot() {
             }) => {
                 if (qr) {
                     console.log(
-                        "[WhatsApp] Escanea el código QR."
+                        "[WhatsApp] Escanea el cÃ³digo QR."
                     );
                 }
 
                 if (connection === "open") {
                     console.log(
-                        "¡Bot de Huevos Santa Estela " +
+                        "Â¡Bot de Huevos Santa Estela " +
                         "conectado correctamente!"
                     );
 
@@ -2425,7 +2425,7 @@ async function startBot() {
                     iniciandoBot = false;
 
                     console.error(
-                        "[WhatsApp] Conexión cerrada:",
+                        "[WhatsApp] ConexiÃ³n cerrada:",
                         lastDisconnect?.error?.message ||
                         lastDisconnect?.error ||
                         "Motivo desconocido"
@@ -2532,7 +2532,7 @@ server.listen(PORT, () => {
 
 function cerrarAplicacion(signal) {
     console.log(
-        `[Sistema] Señal ${signal}. Guardando memoria.`
+        `[Sistema] SeÃ±al ${signal}. Guardando memoria.`
     );
 
     guardarMemoria();
@@ -2560,7 +2560,7 @@ process.on(
     "uncaughtException",
     (error) => {
         console.error(
-            "[Sistema] Excepción no controlada:",
+            "[Sistema] ExcepciÃ³n no controlada:",
             error
         );
 
