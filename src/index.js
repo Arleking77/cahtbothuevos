@@ -24,7 +24,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = Number(process.env.PORT) || 3000;
 
 const MODELO_GEMINI =
-    process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 const ESTADOS_FILE =
     process.env.ESTADOS_FILE ||
