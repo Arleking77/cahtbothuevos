@@ -955,102 +955,51 @@ Formato exacto:
     );
 }
 
-async function interpretarPedido(
-    mensaje,
-    catalogo,
-    zona
-) {
-    /*
-     * Primero intentamos una identificación local.
-     * Gemini se utiliza para lenguaje más libre.
-     */
-    const productoLocal =
-        buscarProductoLocalmente(
-            catalogo,
-            mensaje
-        );
-
-    const cantidadLocal =
-        extraerCantidadLocal(mensaje);
-
-    if (productoLocal && cantidadLocal) {
-        return {
-            tipo: "pedido",
-            esPedido: true,
-            idProducto: productoLocal.id,
-            cantidad: cantidadLocal,
-            requiereAclaracion: false,
-            aclaracion: null
-        };
-    }
-
-    const modelo = genAI.getGenerativeModel({
-        model: MODELO_GEMINI
-    });
-
-    const catalogoTexto =
-        construirCatalogoTexto(
-            catalogo,
-            zona
-        );
-
-    const prompt = `
-Eres un clasificador de mensajes para Huevos Santa Estela.
-
-Mensaje del cliente:
-"${mensaje}"
-
-Catálogo oficial:
-${catalogoTexto}
-
-Determina la intención del mensaje.
-
-Tipos posibles:
-- pedido
-- consulta
-- saludo
-- reclamo
-- humano
-- cancelar
-- modificar_datos
-
-Reglas:
-1. Considera errores ortográficos comunes.
-2. "junbo", "jumvo" o "jubo" pueden significar "jumbo".
-3. No inventes IDs.
-4. Solo usa un ID presente en el catálogo.
-5. Si el cliente pregunta precios, no es un pedido.
-6. Si dice "quiero saber", normalmente es consulta.
-7. Si solicita una cantidad concreta y un producto concreto, es pedido.
-8. Si hay producto pero no cantidad, requiere aclaración.
-9. Si hay cantidad pero no producto, requiere aclaración.
-10. Devuelve únicamente JSON válido, sin markdown.
-
-Formato exacto:
-{
-  "tipo": "consulta",
-  "esPedido": false,
-  "idProducto": null,
-  "cantidad": null,
-  "requiereAclaracion": false,
-  "aclaracion": null
-}
-`;
-
-    const resultado =
-        await modelo.generateContent(prompt);
-
-    return parsearJSONSeguro(
-        resultado.response.text(),
-        {
-            tipo: "consulta",
-            esPedido: false,
-            idProducto: null,
-            cantidad: null,
-            requiereAclaracion: false,
-            aclaracion: null
+function extraerItemsLocales(catalogo, texto) {
+    const mensaje = normalizarTexto(texto);
+    const defs = [
+        { aliases: ["jumbo","junbo","jumvo","jimbo","jubo","especial"], criterios: ["jumbo","especial"] },
+        { aliases: ["extra grande","extras","extra"], criterios: ["extra"] },
+        { aliases: ["primera","grandes","grande"], criterios: ["primera","grande"] },
+        { aliases: ["segunda","medianos","medianas","mediano","mediana"], criterios: ["segunda","mediano","mediana"] },
+        { aliases: ["tercera","chicos","chicas","chico","chica","pequeno","pequena"], criterios: ["tercera","chico","pequeno"] }
+    ];
+    const presentes = defs.filter(d => d.aliases.some(a => mensaje.includes(a)));
+    const items = [];
+    for (const def of presentes) {
+        const alias = def.aliases.find(a => mensaje.includes(a));
+        const producto = catalogo.find(p => {
+            const contenido = normalizarTexto([p.id,p.categoria,p.descripcion,p.gramaje,p.formato].join(" "));
+            return def.criterios.some(c => contenido.includes(c));
+        });
+        if (!producto) continue;
+        const pos = mensaje.indexOf(alias);
+        const antes = mensaje.slice(Math.max(0, pos - 35), pos);
+        const numeros = antes.match(/(\d{1,3})\s*(?:bandejas?|cajas?|unidades?)?\s*(?:de\s+)?$/);
+        let cantidad = numeros ? Number.parseInt(numeros[1],10) : null;
+        if (!cantidad && presentes.length === 1) cantidad = extraerCantidadLocal(mensaje);
+        if (cantidad && cantidad >= 1 && cantidad <= MAX_CANTIDAD_PEDIDO) {
+            items.push({ idProducto: producto.id, cantidad });
         }
-    );
+    }
+    return items;
+}
+
+async function interpretarPedido(mensaje, catalogo, zona) {
+    const itemsLocales = extraerItemsLocales(catalogo, mensaje);
+    if (itemsLocales.length) {
+        return { tipo:"pedido", esPedido:true, items:itemsLocales, requiereAclaracion:false, aclaracion:null };
+    }
+    const modelo = genAI.getGenerativeModel({ model: MODELO_GEMINI });
+    const prompt = `Clasifica el mensaje para Huevos Santa Estela y extrae TODOS los productos solicitados.
+Mensaje: "${mensaje}"
+Catálogo: ${construirCatalogoTexto(catalogo,zona)}
+Reglas: usa solo IDs del catálogo; reconoce errores como jimbo, junbo y banfeja; una consulta de precios no es pedido; si pide 2 extras y 1 grande entrega dos items. Responde solo JSON válido:
+{"tipo":"consulta","esPedido":false,"items":[],"requiereAclaracion":false,"aclaracion":null}`;
+    const resultado = await modelo.generateContent(prompt);
+    const salida = parsearJSONSeguro(resultado.response.text(), {tipo:"consulta",esPedido:false,items:[],requiereAclaracion:false,aclaracion:null});
+    if (!Array.isArray(salida.items)) salida.items=[];
+    return salida;
 }
 
 async function generarRespuestaConversacional({
@@ -1133,63 +1082,28 @@ function generarIdPedido() {
     return `PED-${fecha}-${aleatorio}`;
 }
 
-async function crearPreferenciaMercadoPago({
-    idPedido,
-    producto,
-    cantidad,
-    precioUnitario,
-    nombreCliente,
-    telefono
-}) {
-    if (!mpClient) {
-        return {
-            linkPago: "",
-            preferenceId: ""
-        };
-    }
-
+async function crearPreferenciaMercadoPago({ idPedido, items, nombreCliente, telefono }) {
+    if (!mpClient) return { linkPago: "", preferenceId: "" };
     const preference = new Preference(mpClient);
-
     const respuesta = await preference.create({
         body: {
-            items: [
-                {
-                    id: String(producto.id),
-                    title:
-                        `${producto.categoria} ` +
-                        `(${producto.formato})`,
-                    description:
-                        producto.descripcion || "",
-                    quantity: cantidad,
-                    unit_price: precioUnitario,
-                    currency_id: "CLP"
-                }
-            ],
-            payer: {
-                name: nombreCliente || "Cliente WhatsApp",
-                phone: {
-                    number: telefono || ""
-                }
-            },
+            items: items.map(item => ({
+                id: String(item.producto.id),
+                title: `${item.producto.categoria} (${item.producto.formato})`,
+                description: item.producto.descripcion || "",
+                quantity: item.cantidad,
+                unit_price: item.precioUnitario,
+                currency_id: "CLP"
+            })),
+            payer: { name: nombreCliente || "Cliente WhatsApp", phone: { number: telefono || "" } },
             external_reference: idPedido,
             statement_descriptor: "HUEVOS SANTA ESTELA",
-            metadata: {
-                id_pedido: idPedido,
-                id_producto: producto.id,
-                telefono: telefono || ""
-            }
+            metadata: { id_pedido:idPedido, telefono:telefono || "", cantidad_items:items.length }
         }
     });
-
     return {
-        linkPago:
-            respuesta.init_point ||
-            respuesta.sandbox_init_point ||
-            "",
-        preferenceId:
-            respuesta.id
-                ? String(respuesta.id)
-                : ""
+        linkPago: respuesta.init_point || respuesta.sandbox_init_point || "",
+        preferenceId: respuesta.id ? String(respuesta.id) : ""
     };
 }
 
@@ -1241,32 +1155,29 @@ function construirMensajeCatalogo(
     ].join("\n");
 }
 
-function construirResumenPedido(
-    estado,
-    producto,
-    cantidad,
-    precioUnitario
-) {
-    const total = precioUnitario * cantidad;
-
+function construirResumenPedido(estado, items) {
+    const total = items.reduce((suma,item) => suma + item.subtotal, 0);
+    const lineas = items.map(item =>
+        `• ${item.cantidad} × ${item.producto.categoria} (${item.producto.formato}): ${formatearCLP(item.subtotal)}`
+    );
     return [
-        `Perfecto, ${estado.nombre} 🥚`,
-        "",
-        "*Resumen del pedido:*",
-        `• Producto: ${producto.categoria}`,
-        `• Formato: ${producto.formato}`,
-        `• Cantidad: ${cantidad}`,
-        `• Precio unitario: ${formatearCLP(precioUnitario)}`,
-        `• Dirección: ${estado.direccion || "Por confirmar"}`,
-        `• Comuna: ${estado.comuna}`,
-        `• Zona: ${estado.zona}`,
-        "",
-        `*Total: ${formatearCLP(total)}*`,
-        "",
-        "¿Confirmas los datos del pedido?",
-        "Responde *Sí* para elegir el medio de pago o " +
-        "*No* para cancelarlo."
+        `Perfecto, ${estado.nombre} 🥚`, "", "*Resumen del pedido:*",
+        ...lineas, "", `*Total: ${formatearCLP(total)}*`,
+        `📍 ${estado.direccion || "Por confirmar"}, ${estado.comuna}`,
+        "", "¿Confirmas los datos del pedido?",
+        "Responde *Sí* para elegir el medio de pago o *No* para cancelarlo."
     ].join("\n");
+}
+
+function interpretarMetodoPago(texto) {
+    const valor = normalizarTexto(texto);
+    if (valor === "1" || valor.includes("mercado pago") || valor === "mp" || valor.includes("pago online")) return "Mercado Pago";
+    if (valor === "2" || valor.includes("contra entrega") || valor.includes("al recibir") || valor.includes("efectivo")) return "Contra Entrega";
+    return null;
+}
+
+function construirPreguntaMetodoPago(estado) {
+    return [`Pedido confirmado, ${estado.nombre} 🥚`,"","¿Cómo prefieres pagar?","","1. *Mercado Pago*","2. *Contra entrega*","","Responde *1* o *2*."].join("\n");
 }
 
 /* =========================================================
@@ -1611,236 +1522,90 @@ async function procesarRegistroCliente({
     return true;
 }
 
-function interpretarMetodoPago(texto) {
-    const valor = normalizarTexto(texto);
-
-    if (
-        valor === "1" ||
-        valor.includes("mercado pago") ||
-        valor.includes("mercadopago") ||
-        valor === "mp" ||
-        valor.includes("pagar online") ||
-        valor.includes("pago online")
-    ) {
-        return "Mercado Pago";
-    }
-
-    if (
-        valor === "2" ||
-        valor.includes("contra entrega") ||
-        valor.includes("pago al recibir") ||
-        valor.includes("pagar al recibir") ||
-        valor.includes("efectivo") ||
-        valor.includes("cuando llegue")
-    ) {
-        return "Contra Entrega";
-    }
-
-    return null;
-}
-
-function construirPreguntaMetodoPago(estado) {
-    return [
-        `Pedido confirmado, ${estado.nombre} 🥚`,
-        "",
-        "¿Cómo prefieres pagar?",
-        "",
-        "1. *Mercado Pago* (recibirás un link de pago)",
-        "2. *Contra entrega* (pagas al recibir el pedido)",
-        "",
-        "Responde *1* o *2*."
-    ].join("\n");
-}
-
 /* =========================================================
    CONFIRMACIÓN Y CREACIÓN DEL PEDIDO
 ========================================================= */
 
-async function crearPedidoConMetodoPago({
-    sock,
-    currentJid,
-    telefono,
-    estado,
-    catalogo,
-    metodoPago
-}) {
+async function crearPedidoConMetodoPago({ sock, currentJid, telefono, estado, catalogo, metodoPago }) {
     const pedido = estado.pedidoActual;
-
-    if (!pedido) {
-        estado.paso = "LISTO_PARA_PEDIR";
-        persistirEstadoCliente(currentJid, telefono, estado);
-
-        await sock.sendMessage(currentJid, {
-            text: "No encontré un pedido pendiente. Indícame el producto y la cantidad."
-        });
-        return;
-    }
-
-    const producto = buscarProductoPorId(catalogo, pedido.idProducto);
-
-    if (!producto) {
+    if (!pedido || !Array.isArray(pedido.items) || !pedido.items.length) {
         eliminarPedidoActual(currentJid, telefono, estado);
-        await sock.sendMessage(currentJid, {
-            text: "El producto ya no está disponible. Indícame qué producto deseas pedir."
-        });
+        await sock.sendMessage(currentJid,{text:"No encontré un pedido pendiente. Indícame los productos y cantidades."});
         return;
     }
 
-    const stockActual = Number(producto.stockActual ?? 0);
-    if (stockActual < pedido.cantidad) {
-        eliminarPedidoActual(currentJid, telefono, estado);
-        await sock.sendMessage(currentJid, {
-            text:
-                `Solo tenemos ${stockActual} unidad(es) disponibles de ` +
-                `${producto.categoria}. Indícame una nueva cantidad.`
-        });
-        return;
+    const items = [];
+    for (const itemGuardado of pedido.items) {
+        const producto = buscarProductoPorId(catalogo,itemGuardado.idProducto);
+        if (!producto || !productoDisponibleEnZona(producto,estado.zona)) {
+            await sock.sendMessage(currentJid,{text:`${itemGuardado.idProducto} ya no está disponible para tu zona.`});
+            return;
+        }
+        const stock = Number(producto.stockActual ?? 0);
+        if (stock < itemGuardado.cantidad) {
+            await sock.sendMessage(currentJid,{text:`Solo tenemos ${stock} unidad(es) de ${producto.categoria}.`});
+            return;
+        }
+        const precioUnitario = obtenerPrecioProducto(producto,estado.zona);
+        items.push({producto,idProducto:producto.id,cantidad:itemGuardado.cantidad,precioUnitario,subtotal:precioUnitario*itemGuardado.cantidad});
     }
 
-    const precioActual = obtenerPrecioProducto(producto, estado.zona);
-    if (precioActual <= 0 || precioActual !== pedido.precioUnitario) {
-        estado.pedidoActual.precioUnitario = precioActual;
-        estado.pedidoActual.total = precioActual * estado.pedidoActual.cantidad;
-        estado.paso = "ESPERANDO_CONFIRMACION";
-        persistirEstadoCliente(currentJid, telefono, estado);
-
-        await sock.sendMessage(currentJid, {
-            text:
-                "El precio fue actualizado antes de crear el pedido. " +
-                "Confirma nuevamente este resumen:\n\n" +
-                construirResumenPedido(
-                    estado,
-                    producto,
-                    pedido.cantidad,
-                    precioActual
-                )
-        });
-        return;
-    }
-
+    const total = items.reduce((suma,item)=>suma+item.subtotal,0);
     const idPedido = generarIdPedido();
-    estado.paso = "GENERANDO_PEDIDO";
-    estado.pedidoActual.metodoPago = metodoPago;
-    persistirEstadoCliente(currentJid, telefono, estado);
+    estado.paso="GENERANDO_PEDIDO";
+    persistirEstadoCliente(currentJid,telefono,estado);
 
     try {
-        let linkPago = "";
-        let idPreferenciaMP = "";
-
+        let linkPago="";
+        let idPreferenciaMP="";
         if (metodoPago === "Mercado Pago") {
-            if (!mpClient) {
-                throw new Error("Mercado Pago no está configurado.");
-            }
-
-            const pago = await crearPreferenciaMercadoPago({
-                idPedido,
-                producto,
-                cantidad: pedido.cantidad,
-                precioUnitario: pedido.precioUnitario,
-                nombreCliente: estado.nombre,
-                telefono
-            });
-
-            if (!pago.linkPago) {
-                throw new Error("Mercado Pago no devolvió un link de pago.");
-            }
-
-            linkPago = pago.linkPago;
-            idPreferenciaMP = pago.preferenceId;
+            const pago = await crearPreferenciaMercadoPago({idPedido,items,nombreCliente:estado.nombre,telefono});
+            if (!pago.linkPago) throw new Error("Mercado Pago no devolvió un link.");
+            linkPago=pago.linkPago;
+            idPreferenciaMP=pago.preferenceId;
         }
 
         await guardarPedidoEnSheets({
             idPedido,
-            nombreCliente: estado.nombre || "Cliente WhatsApp",
+            nombreCliente:estado.nombre || "Cliente WhatsApp",
             telefono,
-            idProducto: producto.id,
-            cantidad: pedido.cantidad,
-            precioUnitario: pedido.precioUnitario,
-            total: pedido.total,
+            items:items.map(item=>({idProducto:item.idProducto,cantidad:item.cantidad,precioUnitario:item.precioUnitario,subtotal:item.subtotal})),
+            // Compatibilidad con Apps Script anterior
+            idProducto:items[0].idProducto,
+            cantidad:items[0].cantidad,
+            precioUnitario:items[0].precioUnitario,
+            total,
             metodoPago,
-            estadoPago: "Pendiente",
-            estado: "Pendiente",
-            comuna: estado.comuna,
-            zona: estado.zona,
-            direccion: estado.direccion || "Por confirmar",
+            estadoPago:"Pendiente",
+            estado:"Pendiente",
+            comuna:estado.comuna,
+            zona:estado.zona,
+            direccion:estado.direccion || "Por confirmar",
             linkPago,
             idPreferenciaMP,
-            // Compatibilidad temporal con el Apps Script anterior.
-            idPagoMP: idPreferenciaMP
+            idPagoMP:idPreferenciaMP
         });
 
-        estado.ultimoPedido = {
-            idPedido,
-            metodoPago,
-            fecha: new Date().toISOString()
-        };
-
+        estado.ultimoPedido={idPedido,metodoPago,fecha:new Date().toISOString()};
         if (metodoPago === "Mercado Pago") {
-            estado.paso = "PAGO_PENDIENTE";
-            estado.pedidoActual = {
-                ...pedido,
-                idPedido,
-                metodoPago,
-                linkPago,
-                idPreferenciaMP,
-                estadoPago: "Pendiente"
-            };
-
-            persistirEstadoCliente(currentJid, telefono, estado);
-
-            await sock.sendMessage(currentJid, {
-                text: [
-                    `¡Pedido creado correctamente, ${estado.nombre}! 🥚`,
-                    "",
-                    `Número de pedido: *${idPedido}*`,
-                    `Producto: ${producto.categoria}`,
-                    `Cantidad: ${pedido.cantidad}`,
-                    `Total: *${formatearCLP(pedido.total)}*`,
-                    `Estado de despacho: *Pendiente*`,
-                    `Estado de pago: *Pendiente*`,
-                    "",
-                    "🔗 *Link de pago seguro:*",
-                    linkPago,
-                    "",
-                    "Cuando Mercado Pago apruebe el pago, solo se actualizará " +
-                    "el Estado_Pago. El despacho continuará en Pendiente."
-                ].join("\n")
-            });
-            return;
+            estado.paso="PAGO_PENDIENTE";
+            estado.pedidoActual={items,total,idPedido,metodoPago,linkPago,idPreferenciaMP,estadoPago:"Pendiente"};
+        } else {
+            estado.paso="LISTO_PARA_PEDIR";
+            estado.pedidoActual=null;
         }
+        persistirEstadoCliente(currentJid,telefono,estado);
 
-        // Contra entrega: el pedido queda operativo sin link de pago.
-        estado.paso = "LISTO_PARA_PEDIR";
-        estado.pedidoActual = null;
-        persistirEstadoCliente(currentJid, telefono, estado);
-
-        await sock.sendMessage(currentJid, {
-            text: [
-                `¡Pedido creado correctamente, ${estado.nombre}! 🥚`,
-                "",
-                `Número de pedido: *${idPedido}*`,
-                `Producto: ${producto.categoria}`,
-                `Cantidad: ${pedido.cantidad}`,
-                `Total: *${formatearCLP(pedido.total)}*`,
-                "Método de pago: *Contra entrega*",
-                "Estado de pago: *Pendiente*",
-                "Estado de despacho: *Pendiente*",
-                "",
-                "Pagarás cuando recibas el pedido. No se generó un link de Mercado Pago."
-            ].join("\n")
-        });
-    } catch (error) {
-        console.error("[Pedido] Error creando pedido:", error);
-
-        estado.paso = "ESPERANDO_METODO_PAGO";
-        persistirEstadoCliente(currentJid, telefono, estado);
-
-        await sock.sendMessage(currentJid, {
-            text:
-                "No fue posible crear el pedido con ese medio de pago. " +
-                "Tu selección sigue guardada. Responde *1* para Mercado Pago " +
-                "o *2* para contra entrega."
-        });
+        const detalle=items.map(item=>`• ${item.cantidad} × ${item.producto.categoria}: ${formatearCLP(item.subtotal)}`);
+        const respuesta=[`¡Pedido creado correctamente, ${estado.nombre}! 🥚`,"",`Pedido: *${idPedido}*`,...detalle,"",`Total: *${formatearCLP(total)}*`,`Método de pago: *${metodoPago}*`,`Estado de pago: *Pendiente*`,`Estado de despacho: *Pendiente*`];
+        if (linkPago) respuesta.push("","🔗 *Link de pago seguro:*",linkPago);
+        else respuesta.push("","Pagarás al recibir el pedido.");
+        await sock.sendMessage(currentJid,{text:respuesta.join("\n")});
+    } catch(error) {
+        console.error("[Pedido] Error creando pedido:",error);
+        estado.paso="ESPERANDO_METODO_PAGO";
+        persistirEstadoCliente(currentJid,telefono,estado);
+        await sock.sendMessage(currentJid,{text:"No fue posible crear el pedido. Responde *1* para Mercado Pago o *2* para contra entrega."});
     }
 }
 
@@ -2008,7 +1773,7 @@ async function procesarMensaje(sock, msg) {
                     )}*`,
                     link
                         ? `Link de pago: ${link}`
-                        : "El link de pago no está disponible.",
+                        : "El link de pago está pendiente de revisión.",
                     "",
                     "Si necesitas otro pedido, escribe " +
                     "*nuevo pedido*."
@@ -2019,7 +1784,7 @@ async function procesarMensaje(sock, msg) {
         }
 
         if (
-            estado.paso === "GENERANDO_PEDIDO"
+            estado.paso === "GENERANDO_PAGO"
         ) {
             await sock.sendMessage(currentJid, {
                 text:
@@ -2032,60 +1797,33 @@ async function procesarMensaje(sock, msg) {
         }
 
         if (estado.paso === "GENERANDO_PEDIDO") {
-            await sock.sendMessage(currentJid, {
-                text: "Tu pedido se está generando. Espera unos segundos antes de enviar otro mensaje."
-            });
+            await sock.sendMessage(currentJid,{text:"Tu pedido se está generando. Espera unos segundos."});
             return;
         }
 
         if (estado.paso === "ESPERANDO_METODO_PAGO") {
-            const metodoPago = interpretarMetodoPago(mensaje);
-
+            const metodoPago=interpretarMetodoPago(mensaje);
             if (!metodoPago) {
-                await sock.sendMessage(currentJid, {
-                    text: construirPreguntaMetodoPago(estado)
-                });
+                await sock.sendMessage(currentJid,{text:construirPreguntaMetodoPago(estado)});
                 return;
             }
-
-            await crearPedidoConMetodoPago({
-                sock,
-                currentJid,
-                telefono,
-                estado,
-                catalogo,
-                metodoPago
-            });
+            await crearPedidoConMetodoPago({sock,currentJid,telefono,estado,catalogo,metodoPago});
             return;
         }
 
         if (estado.paso === "ESPERANDO_CONFIRMACION") {
             if (esRespuestaPositiva(mensaje)) {
-                estado.paso = "ESPERANDO_METODO_PAGO";
-                persistirEstadoCliente(currentJid, telefono, estado);
-
-                await sock.sendMessage(currentJid, {
-                    text: construirPreguntaMetodoPago(estado)
-                });
+                estado.paso="ESPERANDO_METODO_PAGO";
+                persistirEstadoCliente(currentJid,telefono,estado);
+                await sock.sendMessage(currentJid,{text:construirPreguntaMetodoPago(estado)});
                 return;
             }
-
             if (esRespuestaNegativa(mensaje)) {
-                eliminarPedidoActual(currentJid, telefono, estado);
-
-                await sock.sendMessage(currentJid, {
-                    text:
-                        "Pedido cancelado. No se generó ningún cobro. " +
-                        "Indícame qué producto deseas."
-                });
+                eliminarPedidoActual(currentJid,telefono,estado);
+                await sock.sendMessage(currentJid,{text:"Pedido cancelado. No se generó ningún cobro."});
                 return;
             }
-
-            await sock.sendMessage(currentJid, {
-                text:
-                    "Necesito confirmar los datos del pedido. " +
-                    "Responde *Sí* para elegir el medio de pago o *No* para cancelarlo."
-            });
+            await sock.sendMessage(currentJid,{text:"Responde *Sí* para elegir el medio de pago o *No* para cancelar."});
             return;
         }
 
@@ -2209,128 +1947,32 @@ async function procesarMensaje(sock, msg) {
             return;
         }
 
-        if (
-            interpretacion.esPedido &&
-            interpretacion.idProducto &&
-            interpretacion.cantidad
-        ) {
-            const producto =
-                buscarProductoPorId(
-                    catalogo,
-                    interpretacion.idProducto
-                );
-
-            if (!producto) {
-                await sock.sendMessage(currentJid, {
-                    text:
-                        "No pude identificar ese producto en " +
-                        "el catálogo. Indícame si deseas Jumbo, " +
-                        "Extra, Primera, Segunda o Tercera."
-                });
-
-                return;
+        if (interpretacion.esPedido && Array.isArray(interpretacion.items) && interpretacion.items.length) {
+            const items=[];
+            for (const itemInterpretado of interpretacion.items) {
+                const producto=buscarProductoPorId(catalogo,itemInterpretado.idProducto);
+                const cantidad=Number(itemInterpretado.cantidad);
+                if (!producto || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > MAX_CANTIDAD_PEDIDO) {
+                    await sock.sendMessage(currentJid,{text:"No pude identificar todos los productos o cantidades. Ejemplo: *2 Extra y 1 Grande*."});
+                    return;
+                }
+                if (!productoDisponibleEnZona(producto,estado.zona)) {
+                    await sock.sendMessage(currentJid,{text:`${producto.categoria} no está disponible para ${estado.zona}.`});
+                    return;
+                }
+                const stock=Number(producto.stockActual ?? 0);
+                if (stock < cantidad) {
+                    await sock.sendMessage(currentJid,{text:`Tenemos ${stock} unidad(es) de ${producto.categoria}.`});
+                    return;
+                }
+                const precioUnitario=obtenerPrecioProducto(producto,estado.zona);
+                items.push({producto,idProducto:producto.id,cantidad,precioUnitario,subtotal:precioUnitario*cantidad});
             }
-
-            const cantidad = Number(
-                interpretacion.cantidad
-            );
-
-            if (
-                !Number.isInteger(cantidad) ||
-                cantidad < 1 ||
-                cantidad > MAX_CANTIDAD_PEDIDO
-            ) {
-                await sock.sendMessage(currentJid, {
-                    text:
-                        `Indícame una cantidad válida entre ` +
-                        `1 y ${MAX_CANTIDAD_PEDIDO}.`
-                });
-
-                return;
-            }
-
-            if (
-                !productoDisponibleEnZona(
-                    producto,
-                    estado.zona
-                )
-            ) {
-                await sock.sendMessage(currentJid, {
-                    text:
-                        `${producto.categoria} no está disponible ` +
-                        `actualmente para ${estado.zona}. ` +
-                        "Puedo ayudarte a elegir otro producto."
-                });
-
-                return;
-            }
-
-            const stockActual = Number(
-                producto.stockActual ?? 0
-            );
-
-            if (stockActual < cantidad) {
-                await sock.sendMessage(currentJid, {
-                    text:
-                        `Tenemos ${stockActual} unidad(es) ` +
-                        `disponibles de ${producto.categoria}. ` +
-                        "Indícame una cantidad menor."
-                });
-
-                return;
-            }
-
-            const precioUnitario =
-                obtenerPrecioProducto(
-                    producto,
-                    estado.zona
-                );
-
-            if (
-                !Number.isFinite(precioUnitario) ||
-                precioUnitario <= 0
-            ) {
-                await sock.sendMessage(currentJid, {
-                    text:
-                        "El producto no tiene un precio válido " +
-                        "para tu zona. El pedido debe revisarse " +
-                        "manualmente."
-                });
-
-                return;
-            }
-
-            const total =
-                precioUnitario * cantidad;
-
-            estado.pedidoActual = {
-                idProducto: producto.id,
-                cantidad,
-                precioUnitario,
-                total,
-                creadoEn:
-                    new Date().toISOString()
-            };
-
-            estado.paso =
-                "ESPERANDO_CONFIRMACION";
-
-            persistirEstadoCliente(
-                currentJid,
-                telefono,
-                estado
-            );
-
-            await sock.sendMessage(currentJid, {
-                text:
-                    construirResumenPedido(
-                        estado,
-                        producto,
-                        cantidad,
-                        precioUnitario
-                    )
-            });
-
+            const total=items.reduce((suma,item)=>suma+item.subtotal,0);
+            estado.pedidoActual={items:items.map(item=>({idProducto:item.idProducto,cantidad:item.cantidad,precioUnitario:item.precioUnitario,subtotal:item.subtotal})),total,creadoEn:new Date().toISOString()};
+            estado.paso="ESPERANDO_CONFIRMACION";
+            persistirEstadoCliente(currentJid,telefono,estado);
+            await sock.sendMessage(currentJid,{text:construirResumenPedido(estado,items)});
             return;
         }
 
@@ -2593,6 +2235,3 @@ process.on(
         guardarMemoria();
     }
 );
-/* =========================================================
-   fin
-========================================================= */
