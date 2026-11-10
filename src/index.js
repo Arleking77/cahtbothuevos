@@ -955,6 +955,21 @@ Formato exacto:
     );
 }
 
+function normalizarTextoCompra(valor = "") {
+    return normalizarTexto(valor)
+        .replace(/\bpromoxion\b/g, "promocion")
+        .replace(/\bpromosion\b/g, "promocion")
+        .replace(/\bband3jqs\b/g, "bandejas")
+        .replace(/\bband3jas\b/g, "bandejas")
+        .replace(/\bbanfejas\b/g, "bandejas")
+        .replace(/\bbanfeja\b/g, "bandeja")
+        .replace(/\b3xtra\b/g, "extra")
+        .replace(/\bectra\b/g, "extra")
+        .replace(/\bextrra\b/g, "extra")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 function esConsultaListaPrecios(texto) {
     const mensaje = normalizarTexto(texto);
     const expresiones = [
@@ -1046,7 +1061,7 @@ function construirListaPreciosCompleta(estado, catalogo) {
 }
 
 function detectarFamiliaProducto(texto) {
-    const mensaje = normalizarTexto(texto);
+    const mensaje = normalizarTextoCompra(texto);
 
     if (["jumbo", "junbo", "jumvo", "jimbo", "jubo", "especial"].some(x => mensaje.includes(x))) {
         return "jumbo";
@@ -1068,7 +1083,7 @@ function detectarFamiliaProducto(texto) {
 }
 
 function detectarFormatoProducto(texto) {
-    const mensaje = normalizarTexto(texto);
+    const mensaje = normalizarTextoCompra(texto);
 
     if (
         mensaje.includes("caja 180") ||
@@ -1126,7 +1141,7 @@ function idProductoPorFamiliaYFormato(familia, formato) {
 }
 
 function extraerCantidadSegmento(texto, formato) {
-    const mensaje = normalizarTexto(texto);
+    const mensaje = normalizarTextoCompra(texto);
 
     const palabrasNumero = {
         una: 1,
@@ -1177,7 +1192,7 @@ function extraerCantidadSegmento(texto, formato) {
 }
 
 function dividirSolicitudEnSegmentos(texto) {
-    return normalizarTexto(texto)
+    return normalizarTextoCompra(texto)
         .replace(/\s+y\s+/g, "|")
         .replace(/\s*,\s*/g, "|")
         .replace(/\s*;\s*/g, "|")
@@ -1466,6 +1481,174 @@ function interpretarMetodoPago(texto) {
 
 function construirPreguntaMetodoPago(estado) {
     return [`Pedido confirmado, ${estado.nombre} 🥚`,"","¿Cómo prefieres pagar?","","1. *Mercado Pago*","2. *Contra entrega*","","Responde *1* o *2*."].join("\n");
+}
+
+function esSolicitudMenuCompra(texto) {
+    const mensaje = normalizarTextoCompra(texto);
+    const comandos = [
+        "comprar",
+        "nuevo pedido",
+        "hacer pedido",
+        "quiero comprar",
+        "iniciar pedido",
+        "menu de compra",
+        "menu compra"
+    ];
+
+    return comandos.some(comando => mensaje === comando || mensaje.includes(comando));
+}
+
+function opcionesFormato() {
+    return [
+        "🥚 *¿Qué formato deseas?*",
+        "",
+        "1️⃣ Bandejas individuales",
+        "2️⃣ Promociones de 3 bandejas",
+        "3️⃣ Cajas de 180 huevos",
+        "",
+        "Responde *1*, *2* o *3*.",
+        "También puedes escribir *cancelar*."
+    ].join("\n");
+}
+
+function productosPorFormato(formato) {
+    const mapa = {
+        individual: ["PROD-001", "PROD-002", "PROD-003", "PROD-004", "PROD-005"],
+        pack3: ["PROD-006", "PROD-007", "PROD-008", "PROD-009"],
+        caja180: ["PROD-010", "PROD-011", "PROD-012", "PROD-013"]
+    };
+    return mapa[formato] || [];
+}
+
+function construirMenuProductos(formato, catalogo, zona) {
+    const titulos = {
+        individual: "*Bandejas individuales*",
+        pack3: "*Promociones de 3 bandejas*",
+        caja180: "*Cajas de 180 huevos*"
+    };
+
+    const ids = productosPorFormato(formato);
+    const productos = ids
+        .map(id => catalogo.find(producto => producto.id === id))
+        .filter(producto => producto && productoDisponibleEnZona(producto, zona));
+
+    const lineas = productos.map((producto, indice) =>
+        `${indice + 1}️⃣ ${producto.categoria} - ${producto.descripcion || ""}: ` +
+        `*${formatearCLP(obtenerPrecioProducto(producto, zona))}*`
+    );
+
+    return [
+        titulos[formato] || "*Productos*",
+        "",
+        ...lineas,
+        "",
+        "Responde con el número del producto.",
+        "Escribe *volver* para cambiar de formato o *cancelar*."
+    ].join("\n");
+}
+
+function numeroSeleccion(texto) {
+    const mensaje = normalizarTextoCompra(texto);
+    const match = mensaje.match(/^([1-9]|10)$/);
+    return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function construirCarrito(estado, catalogo) {
+    const items = estado.pedidoActual?.items || [];
+    const lineas = items.map(item => {
+        const producto = catalogo.find(p => p.id === item.idProducto);
+        return `• ${item.cantidad} × ${producto?.categoria || item.idProducto}: ` +
+            `${formatearCLP(item.subtotal)}`;
+    });
+    const total = items.reduce((suma, item) => suma + Number(item.subtotal || 0), 0);
+
+    return [
+        "🛒 *Tu carrito*",
+        "",
+        ...lineas,
+        "",
+        `*Total: ${formatearCLP(total)}*`,
+        `📍 ${estado.direccion || "Por confirmar"}, ${estado.comuna}`,
+        "",
+        "1️⃣ Confirmar pedido",
+        "2️⃣ Agregar otro producto",
+        "3️⃣ Vaciar y comenzar de nuevo",
+        "4️⃣ Cancelar"
+    ].join("\n");
+}
+
+function iniciarMenuCompra(currentJid, telefono, estado) {
+    estado.paso = "MENU_FORMATO";
+    estado.menuFormato = null;
+    estado.seleccionTemporal = null;
+    estado.pedidoActual = {
+        items: [],
+        total: 0,
+        creadoEn: new Date().toISOString()
+    };
+    persistirEstadoCliente(currentJid, telefono, estado);
+}
+
+function agregarItemCarrito(estado, producto, cantidad) {
+    const precioUnitario = obtenerPrecioProducto(producto, estado.zona);
+    const items = estado.pedidoActual?.items || [];
+    const existente = items.find(item => item.idProducto === producto.id);
+
+    if (existente) {
+        existente.cantidad += cantidad;
+        existente.precioUnitario = precioUnitario;
+        existente.subtotal = existente.cantidad * precioUnitario;
+    } else {
+        items.push({
+            idProducto: producto.id,
+            cantidad,
+            precioUnitario,
+            subtotal: precioUnitario * cantidad
+        });
+    }
+
+    estado.pedidoActual.items = items;
+    estado.pedidoActual.total = items.reduce(
+        (suma, item) => suma + Number(item.subtotal || 0),
+        0
+    );
+}
+
+function detectarAmbiguedadTresUnidades(texto) {
+    const mensaje = normalizarTextoCompra(texto);
+    const familia = detectarFamiliaProducto(mensaje);
+
+    if (!familia || familia === "jumbo") return null;
+    if (detectarFormatoProducto(mensaje) !== "individual") return null;
+
+    const tieneTres = /\b3\b/.test(mensaje) || /\btres\b/.test(mensaje);
+    const explicitaIndividual = mensaje.includes("individual") || mensaje.includes("sueltas");
+
+    if (!tieneTres || explicitaIndividual) return null;
+
+    return familia;
+}
+
+function construirPreguntaAmbiguedad(familia, catalogo, zona) {
+    const idIndividual = idProductoPorFamiliaYFormato(familia, "individual");
+    const idPromo = idProductoPorFamiliaYFormato(familia, "pack3");
+    const individual = catalogo.find(p => p.id === idIndividual);
+    const promo = catalogo.find(p => p.id === idPromo);
+
+    if (!individual || !promo) return null;
+
+    const totalIndividual = obtenerPrecioProducto(individual, zona) * 3;
+    const totalPromo = obtenerPrecioProducto(promo, zona);
+
+    return [
+        "Encontré dos posibilidades:",
+        "",
+        `1️⃣ 3 bandejas ${individual.descripcion || individual.categoria} individuales: ` +
+        `*${formatearCLP(totalIndividual)}*`,
+        `2️⃣ 1 promoción ${promo.categoria}: *${formatearCLP(totalPromo)}*`,
+        "",
+        "¿Cuál deseas? Responde *1* o *2*."
+    ].join("\n");
 }
 
 /* =========================================================
@@ -2033,16 +2216,14 @@ async function procesarMensaje(sock, msg) {
                     "nuevo pedido"
                 )
             ) {
-                eliminarPedidoActual(
+                iniciarMenuCompra(
                     currentJid,
                     telefono,
                     estado
                 );
 
                 await sock.sendMessage(currentJid, {
-                    text:
-                        "Perfecto. Indícame el producto y " +
-                        "la cantidad del nuevo pedido."
+                    text: opcionesFormato()
                 });
 
                 return;
@@ -2084,6 +2265,172 @@ async function procesarMensaje(sock, msg) {
             return;
         }
 
+        if (estado.paso === "MENU_FORMATO") {
+            const opcion = numeroSeleccion(mensaje);
+            const formatos = { 1: "individual", 2: "pack3", 3: "caja180" };
+
+            if (normalizarTextoCompra(mensaje).includes("cancelar")) {
+                eliminarPedidoActual(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, { text: "Pedido cancelado." });
+                return;
+            }
+
+            if (!formatos[opcion]) {
+                await sock.sendMessage(currentJid, { text: opcionesFormato() });
+                return;
+            }
+
+            estado.menuFormato = formatos[opcion];
+            estado.paso = "MENU_PRODUCTO";
+            persistirEstadoCliente(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, {
+                text: construirMenuProductos(estado.menuFormato, catalogo, estado.zona)
+            });
+            return;
+        }
+
+        if (estado.paso === "MENU_PRODUCTO") {
+            const textoMenu = normalizarTextoCompra(mensaje);
+
+            if (textoMenu.includes("volver")) {
+                estado.paso = "MENU_FORMATO";
+                persistirEstadoCliente(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, { text: opcionesFormato() });
+                return;
+            }
+
+            if (textoMenu.includes("cancelar")) {
+                eliminarPedidoActual(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, { text: "Pedido cancelado." });
+                return;
+            }
+
+            const opcion = numeroSeleccion(mensaje);
+            const ids = productosPorFormato(estado.menuFormato);
+            const idProducto = opcion ? ids[opcion - 1] : null;
+            const producto = catalogo.find(p => p.id === idProducto);
+
+            if (!producto || !productoDisponibleEnZona(producto, estado.zona)) {
+                await sock.sendMessage(currentJid, {
+                    text: construirMenuProductos(estado.menuFormato, catalogo, estado.zona)
+                });
+                return;
+            }
+
+            estado.seleccionTemporal = { idProducto: producto.id };
+            estado.paso = "MENU_CANTIDAD";
+            persistirEstadoCliente(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, {
+                text: [
+                    `Seleccionaste *${producto.categoria} - ${producto.descripcion || ""}*`,
+                    `Precio: *${formatearCLP(obtenerPrecioProducto(producto, estado.zona))}*`,
+                    "",
+                    "¿Cuántas unidades de este producto deseas?",
+                    "Responde con un número entre 1 y 100."
+                ].join("\n")
+            });
+            return;
+        }
+
+        if (estado.paso === "MENU_CANTIDAD") {
+            const cantidad = Number.parseInt(normalizarTextoCompra(mensaje), 10);
+            const producto = catalogo.find(
+                p => p.id === estado.seleccionTemporal?.idProducto
+            );
+
+            if (!producto || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > MAX_CANTIDAD_PEDIDO) {
+                await sock.sendMessage(currentJid, {
+                    text: `Indica una cantidad válida entre 1 y ${MAX_CANTIDAD_PEDIDO}.`
+                });
+                return;
+            }
+
+            const stock = Number(producto.stockActual ?? 0);
+            if (stock < cantidad) {
+                await sock.sendMessage(currentJid, {
+                    text: `Solo tenemos ${stock} unidad(es) de ${producto.categoria}.`
+                });
+                return;
+            }
+
+            agregarItemCarrito(estado, producto, cantidad);
+            estado.seleccionTemporal = null;
+            estado.paso = "MENU_CARRITO";
+            persistirEstadoCliente(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, {
+                text: construirCarrito(estado, catalogo)
+            });
+            return;
+        }
+
+        if (estado.paso === "MENU_CARRITO") {
+            const opcion = numeroSeleccion(mensaje);
+
+            if (opcion === 1) {
+                estado.paso = "ESPERANDO_METODO_PAGO";
+                persistirEstadoCliente(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, {
+                    text: construirPreguntaMetodoPago(estado)
+                });
+                return;
+            }
+
+            if (opcion === 2) {
+                estado.paso = "MENU_FORMATO";
+                persistirEstadoCliente(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, { text: opcionesFormato() });
+                return;
+            }
+
+            if (opcion === 3) {
+                iniciarMenuCompra(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, { text: opcionesFormato() });
+                return;
+            }
+
+            if (opcion === 4) {
+                eliminarPedidoActual(currentJid, telefono, estado);
+                await sock.sendMessage(currentJid, { text: "Pedido cancelado." });
+                return;
+            }
+
+            await sock.sendMessage(currentJid, {
+                text: construirCarrito(estado, catalogo)
+            });
+            return;
+        }
+
+        if (estado.paso === "MENU_AMBIGUEDAD") {
+            const opcion = numeroSeleccion(mensaje);
+            const familia = estado.ambiguedadFamilia;
+            const formato = opcion === 1 ? "individual" : opcion === 2 ? "pack3" : null;
+
+            if (!formato) {
+                await sock.sendMessage(currentJid, {
+                    text: construirPreguntaAmbiguedad(familia, catalogo, estado.zona)
+                });
+                return;
+            }
+
+            const idProducto = idProductoPorFamiliaYFormato(familia, formato);
+            const producto = catalogo.find(p => p.id === idProducto);
+            const cantidad = formato === "individual" ? 3 : 1;
+
+            estado.pedidoActual = {
+                items: [],
+                total: 0,
+                creadoEn: new Date().toISOString()
+            };
+            agregarItemCarrito(estado, producto, cantidad);
+            estado.ambiguedadFamilia = null;
+            estado.paso = "MENU_CARRITO";
+            persistirEstadoCliente(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, {
+                text: construirCarrito(estado, catalogo)
+            });
+            return;
+        }
+
         if (estado.paso === "GENERANDO_PEDIDO") {
             await sock.sendMessage(currentJid,{text:"Tu pedido se está generando. Espera unos segundos."});
             return;
@@ -2111,7 +2458,52 @@ async function procesarMensaje(sock, msg) {
                 await sock.sendMessage(currentJid,{text:"Pedido cancelado. No se generó ningún cobro."});
                 return;
             }
-            await sock.sendMessage(currentJid,{text:"Responde *Sí* para elegir el medio de pago o *No* para cancelar."});
+            // Cualquier descripción de producto reemplaza el pedido pendiente.
+            const nuevaInterpretacion = await interpretarPedido(
+                mensaje,
+                catalogo,
+                estado.zona
+            );
+
+            if (nuevaInterpretacion.esPedido && Array.isArray(nuevaInterpretacion.items) && nuevaInterpretacion.items.length) {
+                const nuevosItems = [];
+
+                for (const item of nuevaInterpretacion.items) {
+                    const producto = buscarProductoPorId(catalogo, item.idProducto);
+                    const cantidad = Number(item.cantidad);
+                    if (!producto || !Number.isInteger(cantidad) || cantidad < 1) continue;
+                    const precioUnitario = obtenerPrecioProducto(producto, estado.zona);
+                    nuevosItems.push({
+                        producto,
+                        idProducto: producto.id,
+                        cantidad,
+                        precioUnitario,
+                        subtotal: precioUnitario * cantidad
+                    });
+                }
+
+                if (nuevosItems.length) {
+                    estado.pedidoActual = {
+                        items: nuevosItems.map(item => ({
+                            idProducto: item.idProducto,
+                            cantidad: item.cantidad,
+                            precioUnitario: item.precioUnitario,
+                            subtotal: item.subtotal
+                        })),
+                        total: nuevosItems.reduce((suma, item) => suma + item.subtotal, 0),
+                        creadoEn: new Date().toISOString()
+                    };
+                    persistirEstadoCliente(currentJid, telefono, estado);
+                    await sock.sendMessage(currentJid, {
+                        text: construirResumenPedido(estado, nuevosItems)
+                    });
+                    return;
+                }
+            }
+
+            await sock.sendMessage(currentJid, {
+                text: "Responde *Sí* para elegir el medio de pago, *No* para cancelar o escribe *menú* para elegir productos."
+            });
             return;
         }
 
@@ -2165,6 +2557,27 @@ async function procesarMensaje(sock, msg) {
                     "tu comuna."
             });
 
+            return;
+        }
+
+        if (esSolicitudMenuCompra(mensaje) || normalizarTextoCompra(mensaje) === "menu") {
+            iniciarMenuCompra(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, { text: opcionesFormato() });
+            return;
+        }
+
+        const familiaAmbigua = detectarAmbiguedadTresUnidades(mensaje);
+        if (familiaAmbigua) {
+            estado.paso = "MENU_AMBIGUEDAD";
+            estado.ambiguedadFamilia = familiaAmbigua;
+            persistirEstadoCliente(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, {
+                text: construirPreguntaAmbiguedad(
+                    familiaAmbigua,
+                    catalogo,
+                    estado.zona
+                )
+            });
             return;
         }
 
