@@ -955,50 +955,338 @@ Formato exacto:
     );
 }
 
-function extraerItemsLocales(catalogo, texto) {
+function esConsultaListaPrecios(texto) {
     const mensaje = normalizarTexto(texto);
-    const defs = [
-        { aliases: ["jumbo","junbo","jumvo","jimbo","jubo","especial"], criterios: ["jumbo","especial"] },
-        { aliases: ["extra grande","extras","extra"], criterios: ["extra"] },
-        { aliases: ["primera","grandes","grande"], criterios: ["primera","grande"] },
-        { aliases: ["segunda","medianos","medianas","mediano","mediana"], criterios: ["segunda","mediano","mediana"] },
-        { aliases: ["tercera","chicos","chicas","chico","chica","pequeno","pequena"], criterios: ["tercera","chico","pequeno"] }
+    const expresiones = [
+        "lista de precios",
+        "lista precios",
+        "todos los precios",
+        "todos los productos",
+        "precios de los productos",
+        "precios",
+        "precio",
+        "catalogo",
+        "productos disponibles",
+        "que productos tienen",
+        "que productos hay",
+        "cuanto cuestan",
+        "valores"
     ];
-    const presentes = defs.filter(d => d.aliases.some(a => mensaje.includes(a)));
-    const items = [];
-    for (const def of presentes) {
-        const alias = def.aliases.find(a => mensaje.includes(a));
-        const producto = catalogo.find(p => {
-            const contenido = normalizarTexto([p.id,p.categoria,p.descripcion,p.gramaje,p.formato].join(" "));
-            return def.criterios.some(c => contenido.includes(c));
+
+    return expresiones.some(expresion =>
+        mensaje.includes(normalizarTexto(expresion))
+    );
+}
+
+function construirListaPreciosCompleta(estado, catalogo) {
+    const disponibles = catalogo.filter(producto =>
+        productoDisponibleEnZona(producto, estado.zona) &&
+        obtenerPrecioProducto(producto, estado.zona) > 0
+    );
+
+    if (!disponibles.length) {
+        return `No encontré productos disponibles para ${estado.zona}.`;
+    }
+
+    const secciones = [
+        {
+            titulo: "*Bandejas individuales*",
+            ids: ["PROD-001", "PROD-002", "PROD-003", "PROD-004", "PROD-005"]
+        },
+        {
+            titulo: "*Promociones de 3 bandejas*",
+            ids: ["PROD-006", "PROD-007", "PROD-008", "PROD-009"]
+        },
+        {
+            titulo: "*Cajas de 180 huevos*",
+            ids: ["PROD-010", "PROD-011", "PROD-012", "PROD-013"]
+        }
+    ];
+
+    const lineas = [];
+
+    for (const seccion of secciones) {
+        const productosSeccion = seccion.ids
+            .map(id => disponibles.find(producto => producto.id === id))
+            .filter(Boolean);
+
+        if (!productosSeccion.length) continue;
+
+        lineas.push(seccion.titulo);
+
+        productosSeccion.forEach(producto => {
+            const precio = obtenerPrecioProducto(producto, estado.zona);
+            const nombre = [producto.categoria, producto.descripcion]
+                .filter(Boolean)
+                .join(" - ");
+            const detalles = [producto.gramaje, producto.formato]
+                .filter(Boolean)
+                .join(" | ");
+
+            lineas.push(
+                `• ${nombre}${detalles ? ` | ${detalles}` : ""}: ` +
+                `*${formatearCLP(precio)}*`
+            );
         });
-        if (!producto) continue;
-        const pos = mensaje.indexOf(alias);
-        const antes = mensaje.slice(Math.max(0, pos - 35), pos);
-        const numeros = antes.match(/(\d{1,3})\s*(?:bandejas?|cajas?|unidades?)?\s*(?:de\s+)?$/);
-        let cantidad = numeros ? Number.parseInt(numeros[1],10) : null;
-        if (!cantidad && presentes.length === 1) cantidad = extraerCantidadLocal(mensaje);
-        if (cantidad && cantidad >= 1 && cantidad <= MAX_CANTIDAD_PEDIDO) {
-            items.push({ idProducto: producto.id, cantidad });
+
+        lineas.push("");
+    }
+
+    return [
+        `¡Claro, ${estado.nombre}! 🥚`,
+        "",
+        `Estos son todos los productos disponibles para *${estado.comuna}*:`,
+        "",
+        ...lineas,
+        "Para pedir, puedes escribir por ejemplo:",
+        "• 2 bandejas Extra",
+        "• 1 pack 3 x Extra",
+        "• 1 caja de 180 Extra"
+    ].join("\n");
+}
+
+function detectarFamiliaProducto(texto) {
+    const mensaje = normalizarTexto(texto);
+
+    if (["jumbo", "junbo", "jumvo", "jimbo", "jubo", "especial"].some(x => mensaje.includes(x))) {
+        return "jumbo";
+    }
+    if (["extra grande", "extras", "extra"].some(x => mensaje.includes(x))) {
+        return "extra";
+    }
+    if (["primera", "grandes", "grande"].some(x => mensaje.includes(x))) {
+        return "primera";
+    }
+    if (["segunda", "medianos", "medianas", "mediano", "mediana"].some(x => mensaje.includes(x))) {
+        return "segunda";
+    }
+    if (["tercera", "chicos", "chicas", "chico", "chica", "pequeno", "pequena"].some(x => mensaje.includes(x))) {
+        return "tercera";
+    }
+
+    return null;
+}
+
+function detectarFormatoProducto(texto) {
+    const mensaje = normalizarTexto(texto);
+
+    if (
+        mensaje.includes("caja 180") ||
+        mensaje.includes("caja de 180") ||
+        mensaje.includes("caja x 180") ||
+        mensaje.includes("180 huevos") ||
+        mensaje.includes("180 unidades")
+    ) {
+        return "caja180";
+    }
+
+    if (
+        mensaje.includes("3 x") ||
+        mensaje.includes("3x") ||
+        mensaje.includes("pack 3") ||
+        mensaje.includes("pack de 3") ||
+        mensaje.includes("promo 3") ||
+        mensaje.includes("promocion 3") ||
+        mensaje.includes("tres bandejas por")
+    ) {
+        return "pack3";
+    }
+
+    return "individual";
+}
+
+function idProductoPorFamiliaYFormato(familia, formato) {
+    const mapa = {
+        jumbo: {
+            individual: "PROD-001"
+        },
+        extra: {
+            individual: "PROD-002",
+            pack3: "PROD-006",
+            caja180: "PROD-010"
+        },
+        primera: {
+            individual: "PROD-003",
+            pack3: "PROD-007",
+            caja180: "PROD-011"
+        },
+        segunda: {
+            individual: "PROD-004",
+            pack3: "PROD-008",
+            caja180: "PROD-012"
+        },
+        tercera: {
+            individual: "PROD-005",
+            pack3: "PROD-009",
+            caja180: "PROD-013"
+        }
+    };
+
+    return mapa[familia]?.[formato] || null;
+}
+
+function extraerCantidadSegmento(texto, formato) {
+    const mensaje = normalizarTexto(texto);
+
+    const palabrasNumero = {
+        una: 1,
+        un: 1,
+        uno: 1,
+        dos: 2,
+        tres: 3,
+        cuatro: 4,
+        cinco: 5,
+        seis: 6,
+        siete: 7,
+        ocho: 8,
+        nueve: 9,
+        diez: 10
+    };
+
+    let limpio = mensaje;
+
+    // El 3 de "3 x Extra" describe el formato, no la cantidad pedida.
+    if (formato === "pack3") {
+        limpio = limpio
+            .replace(/\b3\s*x\b/g, " ")
+            .replace(/\b3x\b/g, " ")
+            .replace(/\bpack\s*(?:de\s*)?3\b/g, " ")
+            .replace(/\bpromo(?:cion)?\s*3\b/g, " ");
+    }
+
+    // El 180 describe el contenido de la caja, no la cantidad de cajas.
+    if (formato === "caja180") {
+        limpio = limpio.replace(/\b180\b/g, " ");
+    }
+
+    const numero = limpio.match(/\b(\d{1,3})\b/);
+    if (numero) {
+        const cantidad = Number.parseInt(numero[1], 10);
+        return cantidad >= 1 && cantidad <= MAX_CANTIDAD_PEDIDO
+            ? cantidad
+            : null;
+    }
+
+    for (const [palabra, cantidad] of Object.entries(palabrasNumero)) {
+        if (new RegExp(`\\b${palabra}\\b`).test(limpio)) {
+            return cantidad;
         }
     }
-    return items;
+
+    return 1;
+}
+
+function dividirSolicitudEnSegmentos(texto) {
+    return normalizarTexto(texto)
+        .replace(/\s+y\s+/g, "|")
+        .replace(/\s*,\s*/g, "|")
+        .replace(/\s*;\s*/g, "|")
+        .split("|")
+        .map(segmento => segmento.trim())
+        .filter(Boolean);
+}
+
+function extraerItemsLocales(catalogo, texto) {
+    const segmentos = dividirSolicitudEnSegmentos(texto);
+    const acumulados = new Map();
+
+    for (const segmento of segmentos) {
+        const familia = detectarFamiliaProducto(segmento);
+        if (!familia) continue;
+
+        const formato = detectarFormatoProducto(segmento);
+        const idProducto = idProductoPorFamiliaYFormato(familia, formato);
+        if (!idProducto) continue;
+
+        const producto = catalogo.find(item => item.id === idProducto);
+        if (!producto) continue;
+
+        const cantidad = extraerCantidadSegmento(segmento, formato);
+        if (!cantidad) continue;
+
+        acumulados.set(
+            idProducto,
+            (acumulados.get(idProducto) || 0) + cantidad
+        );
+    }
+
+    return Array.from(acumulados.entries()).map(
+        ([idProducto, cantidad]) => ({
+            idProducto,
+            cantidad
+        })
+    );
 }
 
 async function interpretarPedido(mensaje, catalogo, zona) {
     const itemsLocales = extraerItemsLocales(catalogo, mensaje);
+
     if (itemsLocales.length) {
-        return { tipo:"pedido", esPedido:true, items:itemsLocales, requiereAclaracion:false, aclaracion:null };
+        return {
+            tipo: "pedido",
+            esPedido: true,
+            items: itemsLocales,
+            requiereAclaracion: false,
+            aclaracion: null
+        };
     }
-    const modelo = genAI.getGenerativeModel({ model: MODELO_GEMINI });
-    const prompt = `Clasifica el mensaje para Huevos Santa Estela y extrae TODOS los productos solicitados.
-Mensaje: "${mensaje}"
-Catálogo: ${construirCatalogoTexto(catalogo,zona)}
-Reglas: usa solo IDs del catálogo; reconoce errores como jimbo, junbo y banfeja; una consulta de precios no es pedido; si pide 2 extras y 1 grande entrega dos items. Responde solo JSON válido:
-{"tipo":"consulta","esPedido":false,"items":[],"requiereAclaracion":false,"aclaracion":null}`;
+
+    const modelo = genAI.getGenerativeModel({
+        model: MODELO_GEMINI
+    });
+
+    const prompt = `
+Clasifica el mensaje para Huevos Santa Estela y extrae TODOS los productos solicitados.
+
+Mensaje:
+"${mensaje}"
+
+Catálogo oficial:
+${construirCatalogoTexto(catalogo, zona)}
+
+Reglas obligatorias:
+1. Usa exclusivamente IDs presentes en el catálogo.
+2. Distingue estos formatos:
+   - Bandeja individual Extra = PROD-002.
+   - Pack 3 x Extra = PROD-006.
+   - Caja 180 Extra = PROD-010.
+   - Pack 3 x Primera = PROD-007.
+   - Caja 180 Primera = PROD-011.
+   - Pack 3 x Segunda = PROD-008.
+   - Caja 180 Segunda = PROD-012.
+   - Pack 3 x Tercera = PROD-009.
+   - Caja 180 Tercera = PROD-013.
+3. Reconoce errores como jimbo, junbo y banfeja.
+4. Una consulta de precios no es un pedido.
+5. Si el cliente pide varios productos, devuelve todos en items.
+6. Devuelve únicamente JSON válido, sin markdown.
+
+Formato:
+{
+  "tipo": "consulta",
+  "esPedido": false,
+  "items": [],
+  "requiereAclaracion": false,
+  "aclaracion": null
+}
+`;
+
     const resultado = await modelo.generateContent(prompt);
-    const salida = parsearJSONSeguro(resultado.response.text(), {tipo:"consulta",esPedido:false,items:[],requiereAclaracion:false,aclaracion:null});
-    if (!Array.isArray(salida.items)) salida.items=[];
+    const salida = parsearJSONSeguro(
+        resultado.response.text(),
+        {
+            tipo: "consulta",
+            esPedido: false,
+            items: [],
+            requiereAclaracion: false,
+            aclaracion: null
+        }
+    );
+
+    if (!Array.isArray(salida.items)) {
+        salida.items = [];
+    }
+
     return salida;
 }
 
@@ -1875,6 +2163,21 @@ async function procesarMensaje(sock, msg) {
                     "No pude validar tu comuna en nuestra " +
                     "base de despachos. Escríbeme nuevamente " +
                     "tu comuna."
+            });
+
+            return;
+        }
+
+        if (esConsultaListaPrecios(mensaje)) {
+            console.log(
+                `[Catálogo] Enviando ${catalogo.length} productos para ${estado.zona}.`
+            );
+
+            await sock.sendMessage(currentJid, {
+                text: construirListaPreciosCompleta(
+                    estado,
+                    catalogo
+                )
             });
 
             return;
