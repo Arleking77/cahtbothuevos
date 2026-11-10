@@ -1053,10 +1053,11 @@ function construirListaPreciosCompleta(estado, catalogo) {
         `Estos son todos los productos disponibles para *${estado.comuna}*:`,
         "",
         ...lineas,
-        "Para pedir, puedes escribir por ejemplo:",
-        "• 2 bandejas Extra",
-        "• 1 pack 3 x Extra",
-        "• 1 caja de 180 Extra"
+        "Para realizar un pedido, puedes escribir:",
+        "",
+        "• *Quiero comprar*",
+        "• *Comprar*",
+        "• *Nuevo pedido*"
     ].join("\n");
 }
 
@@ -1481,6 +1482,152 @@ function interpretarMetodoPago(texto) {
 
 function construirPreguntaMetodoPago(estado) {
     return [`Pedido confirmado, ${estado.nombre} 🥚`,"","¿Cómo prefieres pagar?","","1. *Mercado Pago*","2. *Contra entrega*","","Responde *1* o *2*."].join("\n");
+}
+
+function esConsultaVendedores(texto) {
+    const mensaje = normalizarTextoCompra(texto);
+    const expresiones = [
+        "contacto vendedor",
+        "contacto de vendedor",
+        "contacto de los vendedores",
+        "hablar con vendedor",
+        "hablar con un vendedor",
+        "hablar con alguien",
+        "numero de ventas",
+        "telefono de ventas",
+        "ejecutivo",
+        "vendedor"
+    ];
+    return expresiones.some(expresion => mensaje.includes(expresion));
+}
+
+function construirMensajeVendedores(vendedores) {
+    if (!Array.isArray(vendedores) || !vendedores.length) {
+        return [
+            "No encontré contactos de vendedores configurados en este momento.",
+            "Puedes escribir *ayuda* para volver al menú principal."
+        ].join("\n");
+    }
+
+    const lineas = vendedores.map(vendedor => {
+        const telefono = normalizarTelefono(vendedor.telefono || "");
+        return [
+            `• *${vendedor.nombre || "Vendedor"}*`,
+            vendedor.rol ? `  ${vendedor.rol}` : null,
+            telefono ? `  📱 +${telefono}` : null,
+            vendedor.horario ? `  🕐 ${vendedor.horario}` : null
+        ].filter(Boolean).join("\n");
+    });
+
+    return [
+        "👨‍💼 *Contactos de Huevos Santa Estela*",
+        "",
+        ...lineas,
+        "",
+        "Puedes escribir directamente al número indicado."
+    ].join("\n");
+}
+
+function esConsultaEstadoPedido(texto) {
+    const mensaje = normalizarTextoCompra(texto);
+    const expresiones = [
+        "estado de mi pedido",
+        "estado pedido",
+        "mi pedido",
+        "seguimiento",
+        "donde esta mi pedido",
+        "donde viene mi pedido",
+        "cuando llega mi pedido",
+        "como va mi pedido"
+    ];
+    return expresiones.some(expresion => mensaje.includes(expresion));
+}
+
+function fechaPedidoNumero(pedido) {
+    const fecha = new Date(pedido?.fecha || 0);
+    return Number.isNaN(fecha.getTime()) ? 0 : fecha.getTime();
+}
+
+function obtenerUltimoPedidoCliente(pedidos, telefono) {
+    const buscado = normalizarTelefono(telefono || "");
+    if (!buscado || !Array.isArray(pedidos)) return null;
+
+    return pedidos
+        .filter(pedido => normalizarTelefono(pedido.telefono || "") === buscado)
+        .sort((a, b) => fechaPedidoNumero(b) - fechaPedidoNumero(a))[0] || null;
+}
+
+function descripcionEstadoDespacho(estado) {
+    const valor = normalizarTextoCompra(estado);
+    const mensajes = {
+        pendiente: "🟡 Tu pedido está pendiente de preparación.",
+        "en preparacion": "🟠 Tu pedido está siendo preparado.",
+        "en camino": "🚚 Tu pedido va en camino.",
+        entregado: "✅ Tu pedido figura como entregado.",
+        cancelado: "❌ Tu pedido figura como cancelado."
+    };
+    return mensajes[valor] || `🚚 Estado de despacho: ${estado || "Sin información"}`;
+}
+
+function construirEstadoPedido(pedido, catalogo) {
+    if (!pedido) {
+        return [
+            "No encontré pedidos asociados a tu número de WhatsApp.",
+            "Si necesitas ayuda, escribe *vendedor*."
+        ].join("\n");
+    }
+
+    const detalles = Array.isArray(pedido.detalles) && pedido.detalles.length
+        ? pedido.detalles
+        : [{
+            idProducto: pedido.idProducto,
+            cantidad: pedido.cantidad,
+            subtotal: pedido.total
+        }];
+
+    const productos = detalles.map(detalle => {
+        const producto = catalogo.find(item => item.id === detalle.idProducto);
+        const nombre = producto
+            ? `${producto.categoria} - ${producto.descripcion || ""}`
+            : detalle.idProducto;
+        return `• ${detalle.cantidad} × ${nombre}`;
+    });
+
+    return [
+        "📦 *Estado de tu pedido*",
+        "",
+        `Pedido: *${pedido.idPedido}*`,
+        "",
+        "🥚 *Productos:*",
+        ...productos,
+        "",
+        `💰 Total: *${formatearCLP(pedido.total)}*`,
+        `💳 Pago: *${pedido.estadoPago || "Pendiente"}*`,
+        `🚚 Despacho: *${pedido.estado || "Pendiente"}*`,
+        descripcionEstadoDespacho(pedido.estado),
+        "",
+        `📍 ${pedido.direccion || "Dirección por confirmar"}`
+    ].join("\n");
+}
+
+function esSolicitudAyuda(texto) {
+    const mensaje = normalizarTextoCompra(texto);
+    return ["ayuda", "menu", "opciones", "que puedes hacer"].includes(mensaje);
+}
+
+function construirMenuPrincipal(nombre) {
+    return [
+        `🥚 *Huevos Santa Estela${nombre ? ` - ${nombre}` : ""}*`,
+        "",
+        "¿Qué necesitas?",
+        "",
+        "1️⃣ Comprar",
+        "2️⃣ Ver lista de precios",
+        "3️⃣ Consultar mi pedido",
+        "4️⃣ Hablar con un vendedor",
+        "",
+        "Responde con un número o escribe tu consulta."
+    ].join("\n");
 }
 
 function esSolicitudMenuCompra(texto) {
@@ -2192,6 +2339,13 @@ async function procesarMensaje(sock, msg) {
             );
         }
 
+        const clienteExistenteSheet = Boolean(
+            buscarClienteEnSheets(
+                clientesMap,
+                telefono
+            )
+        );
+
         const estado =
             await cargarOCrearEstadoCliente({
                 msg,
@@ -2200,6 +2354,61 @@ async function procesarMensaje(sock, msg) {
                 clientesMap,
                 despachos
             });
+
+        const clienteConRegistroCompleto = Boolean(
+            clienteExistenteSheet &&
+            estado.nombre &&
+            estado.comuna &&
+            estado.zona &&
+            estado.direccion &&
+            estado.paso === "LISTO_PARA_PEDIR"
+        );
+
+        const comandoGlobal = normalizarTextoCompra(mensaje);
+
+        if (clienteConRegistroCompleto && esSolicitudAyuda(mensaje)) {
+            await sock.sendMessage(currentJid, {
+                text: construirMenuPrincipal(estado.nombre)
+            });
+            return;
+        }
+
+        if (clienteConRegistroCompleto && comandoGlobal === "1") {
+            iniciarMenuCompra(currentJid, telefono, estado);
+            await sock.sendMessage(currentJid, { text: opcionesFormato() });
+            return;
+        }
+
+        if (clienteConRegistroCompleto && comandoGlobal === "2") {
+            await sock.sendMessage(currentJid, {
+                text: construirListaPreciosCompleta(estado, catalogo)
+            });
+            return;
+        }
+
+        if (
+            clienteConRegistroCompleto &&
+            (comandoGlobal === "3" || esConsultaEstadoPedido(mensaje))
+        ) {
+            const ultimoPedido = obtenerUltimoPedidoCliente(
+                datosSheet.pedidos || [],
+                telefono
+            );
+            await sock.sendMessage(currentJid, {
+                text: construirEstadoPedido(ultimoPedido, catalogo)
+            });
+            return;
+        }
+
+        if (
+            clienteConRegistroCompleto &&
+            (comandoGlobal === "4" || esConsultaVendedores(mensaje))
+        ) {
+            await sock.sendMessage(currentJid, {
+                text: construirMensajeVendedores(datosSheet.vendedores || [])
+            });
+            return;
+        }
 
         /*
          * Permite iniciar un pedido nuevo si el anterior sigue
@@ -2560,13 +2769,18 @@ async function procesarMensaje(sock, msg) {
             return;
         }
 
-        if (esSolicitudMenuCompra(mensaje) || normalizarTextoCompra(mensaje) === "menu") {
+        if (
+            clienteConRegistroCompleto &&
+            (esSolicitudMenuCompra(mensaje) || normalizarTextoCompra(mensaje) === "menu")
+        ) {
             iniciarMenuCompra(currentJid, telefono, estado);
             await sock.sendMessage(currentJid, { text: opcionesFormato() });
             return;
         }
 
-        const familiaAmbigua = detectarAmbiguedadTresUnidades(mensaje);
+        const familiaAmbigua = clienteConRegistroCompleto
+            ? detectarAmbiguedadTresUnidades(mensaje)
+            : null;
         if (familiaAmbigua) {
             estado.paso = "MENU_AMBIGUEDAD";
             estado.ambiguedadFamilia = familiaAmbigua;
@@ -2581,7 +2795,7 @@ async function procesarMensaje(sock, msg) {
             return;
         }
 
-        if (esConsultaListaPrecios(mensaje)) {
+        if (clienteConRegistroCompleto && esConsultaListaPrecios(mensaje)) {
             console.log(
                 `[Catálogo] Enviando ${catalogo.length} productos para ${estado.zona}.`
             );
