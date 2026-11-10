@@ -1532,10 +1532,20 @@ function esConsultaEstadoPedido(texto) {
     const mensaje = normalizarTextoCompra(texto);
     const expresiones = [
         "estado de mi pedido",
+        "estado de mis pedidos",
         "estado pedido",
+        "estado pedidos",
+        "ver mi pedido",
+        "ver mis pedidos",
+        "mis pedidos",
         "mi pedido",
+        "consultar mi pedido",
+        "consultar mis pedidos",
         "seguimiento",
+        "seguimiento de pedido",
+        "seguimiento de mi pedido",
         "donde esta mi pedido",
+        "donde estan mis pedidos",
         "donde viene mi pedido",
         "cuando llega mi pedido",
         "como va mi pedido"
@@ -1612,7 +1622,19 @@ function construirEstadoPedido(pedido, catalogo) {
 
 function esSolicitudAyuda(texto) {
     const mensaje = normalizarTextoCompra(texto);
-    return ["ayuda", "menu", "opciones", "que puedes hacer"].includes(mensaje);
+    return [
+        "hola",
+        "holi",
+        "buenas",
+        "buen dia",
+        "buenos dias",
+        "buenas tardes",
+        "buenas noches",
+        "ayuda",
+        "menu",
+        "opciones",
+        "que puedes hacer"
+    ].includes(mensaje);
 }
 
 function construirMenuPrincipal(nombre) {
