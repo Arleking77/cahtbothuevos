@@ -1455,7 +1455,7 @@ function construirMensajeCatalogo(
         ...lineas,
         "",
         "Puedes escribir, por ejemplo:",
-        '“1 bandeja Jumbo” o “2 bandejas Extra”.'
+        '“comprar o quiero comprar, para tomar tu pedido”.'
     ].join("\n");
 }
 
