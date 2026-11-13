@@ -2377,8 +2377,11 @@ async function procesarMensaje(sock, msg) {
                 despachos
             });
 
+        /*
+         * El menú se habilita apenas el cliente completa nombre, comuna,
+         * zona y dirección. No exigimos que ya existiera en Excel al inicio.
+         */
         const clienteConRegistroCompleto = Boolean(
-            clienteExistenteSheet &&
             estado.nombre &&
             estado.comuna &&
             estado.zona &&
@@ -2756,14 +2759,26 @@ async function procesarMensaje(sock, msg) {
         }
 
         if (estabaRegistrando) {
-            await sock.sendMessage(currentJid, {
-                text:
-                    construirMensajeCatalogo(
-                        estado,
-                        catalogo
-                    )
+            /*
+             * El último mensaje era parte del registro. Nunca debe
+             * interpretarse como producto o pedido. Al completar los datos,
+             * el cliente entra al menú estructurado.
+             */
+            console.log("[Registro] Onboarding completado; cliente enviado al menú:", {
+                telefono,
+                nombre: estado.nombre,
+                comuna: estado.comuna,
+                direccion: estado.direccion,
+                zona: estado.zona
             });
 
+            await sock.sendMessage(currentJid, {
+                text: [
+                    `¡Perfecto, ${estado.nombre}! Tus datos quedaron registrados ✅`,
+                    "",
+                    construirMenuPrincipal(estado.nombre)
+                ].join("\n")
+            });
             return;
         }
 
